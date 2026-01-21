@@ -5,13 +5,14 @@ import authRoutes from "./routes/authRoutes.js";
 import bookRoutes from "./routes/bookRoutes.js";
 import connectDB from "./db/db.js";
 import cors from "cors";
+import job from "./db/cron.js"
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 
 connectDB();
-
+job.start()
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors())
