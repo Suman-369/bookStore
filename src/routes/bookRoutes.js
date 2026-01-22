@@ -50,12 +50,12 @@ router.get("/all", protectRoutes, async (req, res) => {
     try {
 
         const page = req.query.page||1
-        const limit  = req.query.limit || 5
+        const limit  = req.query.limit || 2
 
         const skip = (page-1)*limit
 
         const books = await bookModel.find()
-        .populate("user","username profileImage")
+        .populate("user","username profileImg")
         .sort({createdAt:-1})
         .skip(skip)
         .limit(limit)
