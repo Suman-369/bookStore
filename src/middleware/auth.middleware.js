@@ -47,4 +47,3 @@ export async function protectRoutes(req, res, next) {
   }
 }
 
-
