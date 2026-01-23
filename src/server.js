@@ -3,6 +3,8 @@ import "dotenv/config";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
 import bookRoutes from "./routes/bookRoutes.js";
+import likeRoutes from "./routes/likeRoutes.js";
+import commentRoutes from "./routes/commentRoutes.js";
 import connectDB from "./db/db.js";
 import cors from "cors";
 import job from "./db/cron.js"
@@ -20,6 +22,8 @@ app.use(cors())
 
 app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
+app.use("/api/likes", likeRoutes);
+app.use("/api/comments", commentRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

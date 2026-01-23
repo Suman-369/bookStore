@@ -1,6 +1,8 @@
 import express from "express";
 import cloudinary from "../db/cloudinary.js";
 import bookModel from "../models/bookModel.js";
+import likeModel from "../models/likeModel.js";
+import commentModel from "../models/commentModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -48,7 +50,7 @@ router.post("/create", protectRoutes, async (req, res) => {
 //fetch all books
 router.get("/all", protectRoutes, async (req, res) => {
     try {
-
+        const userId = req.user._id;
         const page = req.query.page||1
         const limit  = req.query.limit || 2
 
@@ -60,10 +62,26 @@ router.get("/all", protectRoutes, async (req, res) => {
         .skip(skip)
         .limit(limit)
 
+        // Get likes and comments count for each book, and check if current user liked
+        const booksWithStats = await Promise.all(
+            books.map(async (book) => {
+                const likesCount = await likeModel.countDocuments({ book: book._id });
+                const commentsCount = await commentModel.countDocuments({ book: book._id });
+                const isLiked = await likeModel.findOne({ user: userId, book: book._id });
+
+                return {
+                    ...book.toObject(),
+                    likesCount,
+                    commentsCount,
+                    isLiked: !!isLiked,
+                };
+            })
+        );
+
         const totalBooks = await bookModel.countDocuments()
 
         res.send({
-            books,
+            books: booksWithStats,
             currentPage:page,
             totalBooks,
             totalPages:Math.ceil(totalBooks/limit)
