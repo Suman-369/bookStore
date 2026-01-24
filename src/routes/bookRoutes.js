@@ -11,7 +11,7 @@ const router = express.Router();
 //create a book
 router.post("/create", protectRoutes, async (req, res) => {
     try {
-        const {title,caption,image,rating} = req.body
+        const {title,caption,image,rating,mediaType} = req.body
         if(!title || !caption || !image || !rating) {
             return res.status(400).json({
                 message:"All fields are required"
@@ -22,14 +22,21 @@ router.post("/create", protectRoutes, async (req, res) => {
                 message:"Rating must be between 1 and 5"
             })
         }
-        const result = await cloudinary.uploader.upload(image)
+        
+        // Upload to Cloudinary with resource_type based on mediaType
+        const uploadOptions = {
+            resource_type: mediaType === "video" ? "video" : "image"
+        };
+        
+        const result = await cloudinary.uploader.upload(image, uploadOptions)
 
-        const imageUrl = result.secure_url
+        const mediaUrl = result.secure_url
 
         const newBook = await bookModel.create({
             title,
             caption,
-            image:imageUrl,
+            image:mediaUrl,
+            mediaType: mediaType || "image",
             rating,
             user: req.user._id
         })
@@ -161,10 +168,11 @@ router.delete("/delete/:id", protectRoutes, async (req, res) => {
         if(book.image && book.image.includes("cloudinary")){
             try {
                 const publicId = book.image.split("/").pop().split(".")[0]
-                await cloudinary.uploader.destroy(publicId)
+                const resourceType = book.mediaType === "video" ? "video" : "image"
+                await cloudinary.uploader.destroy(publicId, { resource_type: resourceType })
             } catch (error) {
                 return res.status(500).json({
-                    message:"Error deleting image from Cloudinary",
+                    message:"Error deleting media from Cloudinary",
                     error:error.message
                 })
             }

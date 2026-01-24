@@ -13,6 +13,11 @@ const bookSchema = new mongoose.Schema({
         type:String,
         required:true
     },
+    mediaType:{
+        type:String,
+        enum:["image","video"],
+        default:"image"
+    },
     rating:{
         type:Number,
         required:true,
