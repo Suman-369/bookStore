@@ -5,6 +5,8 @@ import authRoutes from "./routes/authRoutes.js";
 import bookRoutes from "./routes/bookRoutes.js";
 import likeRoutes from "./routes/likeRoutes.js";
 import commentRoutes from "./routes/commentRoutes.js";
+import friendRoutes from "./routes/friendRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 import connectDB from "./db/db.js";
 import cors from "cors";
 import job from "./db/cron.js"
@@ -24,6 +26,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
 app.use("/api/likes", likeRoutes);
 app.use("/api/comments", commentRoutes);
+app.use("/api/friends", friendRoutes);
+app.use("/api/users", userRoutes);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

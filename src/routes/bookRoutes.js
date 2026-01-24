@@ -3,6 +3,7 @@ import cloudinary from "../db/cloudinary.js";
 import bookModel from "../models/bookModel.js";
 import likeModel from "../models/likeModel.js";
 import commentModel from "../models/commentModel.js";
+import userModel from "../models/userModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
@@ -96,7 +97,7 @@ router.get("/all", protectRoutes, async (req, res) => {
 })
 
 
-//get recomnded books
+//get recomnded books (current user's books)
 router.get("/user", protectRoutes, async (req, res) => {
     try {
         const books = await bookModel.find({user:req.user._id}).sort({rating:-1}).limit(5)
@@ -108,6 +109,35 @@ router.get("/user", protectRoutes, async (req, res) => {
             message:"Internal server error",
             error:error.message
         })
+    }
+})
+
+//get specific user's books
+router.get("/user/:userId", protectRoutes, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        // Verify user exists
+        const user = await userModel.findById(userId);
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found",
+            });
+        }
+
+        const books = await bookModel
+            .find({ user: userId })
+            .sort({ createdAt: -1 })
+            .populate("user", "username profileImg");
+
+        res.status(200).json({
+            books,
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: "Internal server error",
+            error: error.message,
+        });
     }
 })
 
