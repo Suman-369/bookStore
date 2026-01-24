@@ -389,14 +389,15 @@ router.get("/list", protectRoutes, async (req, res) => {
       .populate("receiver", "username profileImg email")
       .sort({ createdAt: -1 });
 
-    // Extract friends (excluding the current user)
-    const friends = friendships.map((friendship) => {
-      if (friendship.sender._id.toString() === userId.toString()) {
-        return friendship.receiver;
-      } else {
+    // Extract friends (excluding the current user). Skip if sender/receiver failed to populate (e.g. deleted user).
+    const friends = friendships
+      .filter((f) => f.sender && f.receiver)
+      .map((friendship) => {
+        if (friendship.sender._id.toString() === userId.toString()) {
+          return friendship.receiver;
+        }
         return friendship.sender;
-      }
-    });
+      });
 
     res.status(200).json({
       friends,
@@ -425,14 +426,15 @@ router.get("/list/:userId", protectRoutes, async (req, res) => {
       .populate("receiver", "username profileImg email")
       .sort({ createdAt: -1 });
 
-    // Extract friends (excluding the target user)
-    const friends = friendships.map((friendship) => {
-      if (friendship.sender._id.toString() === userId.toString()) {
-        return friendship.receiver;
-      } else {
+    // Extract friends (excluding the target user). Skip if sender/receiver failed to populate (e.g. deleted user).
+    const friends = friendships
+      .filter((f) => f.sender && f.receiver)
+      .map((friendship) => {
+        if (friendship.sender._id.toString() === userId.toString()) {
+          return friendship.receiver;
+        }
         return friendship.sender;
-      }
-    });
+      });
 
     res.status(200).json({
       friends,
