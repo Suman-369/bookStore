@@ -13,6 +13,10 @@ const bookSchema = new mongoose.Schema({
         type:String,
         required:true
     },
+    cloudinaryPublicId:{
+        type:String,
+        default:null
+    },
     mediaType:{
         type:String,
         enum:["image","video"],

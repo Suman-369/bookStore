@@ -1,56 +1,62 @@
 import express from "express";
+import fs from "fs/promises";
 import cloudinary from "../db/cloudinary.js";
 import bookModel from "../models/bookModel.js";
 import likeModel from "../models/likeModel.js";
 import commentModel from "../models/commentModel.js";
 import userModel from "../models/userModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
+import { uploadMedia } from "../middleware/upload.middleware.js";
 
 const router = express.Router();
 
-//create a book
-router.post("/create", protectRoutes, async (req, res) => {
+//create a book (multipart/form-data: media file + title, caption, rating, mediaType)
+router.post("/create", protectRoutes, (req, res, next) => {
+    uploadMedia(req, res, (err) => {
+        if (err) {
+            if (err.code === "LIMIT_FILE_SIZE") return res.status(413).json({ message: "File too large. Maximum 100MB for video (with audio) or image." });
+            return res.status(400).json({ message: err.message || "Upload failed" });
+        }
+        next();
+    });
+}, async (req, res) => {
+    let tempPath = null;
     try {
-        const {title,caption,image,rating,mediaType} = req.body
-        if(!title || !caption || !image || !rating) {
-            return res.status(400).json({
-                message:"All fields are required"
-            })
+        const { title, caption, rating, mediaType } = req.body;
+        const file = req.file;
+        if (!title || !caption || !rating) {
+            return res.status(400).json({ message: "All fields are required" });
         }
-        if(rating<1 || rating>5) {
-            return res.status(400).json({
-                message:"Rating must be between 1 and 5"
-            })
+        if (!file) {
+            return res.status(400).json({ message: "Please select an image or video" });
         }
-        
-        // Upload to Cloudinary with resource_type based on mediaType
-        const uploadOptions = {
-            resource_type: mediaType === "video" ? "video" : "image"
-        };
-        
-        const result = await cloudinary.uploader.upload(image, uploadOptions)
-
-        const mediaUrl = result.secure_url
+        const r = Number(rating);
+        if (!Number.isFinite(r) || r < 1 || r > 5) {
+            return res.status(400).json({ message: "Rating must be between 1 and 5" });
+        }
+        const type = (mediaType === "video" ? "video" : "image");
+        tempPath = file.path;
+        const uploadOptions = { resource_type: type };
+        const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
+        const mediaUrl = result.secure_url;
+        const publicId = result.public_id || null;
+        await fs.unlink(tempPath).catch(() => {});
+        tempPath = null;
 
         const newBook = await bookModel.create({
             title,
             caption,
-            image:mediaUrl,
-            mediaType: mediaType || "image",
-            rating,
-            user: req.user._id
-        })
+            image: mediaUrl,
+            cloudinaryPublicId: publicId,
+            mediaType: type,
+            rating: r,
+            user: req.user._id,
+        });
 
-        res.status(201).json({
-            message:"Book created successfully",
-            book:newBook
-        })
-
+        res.status(201).json({ message: "Book created successfully", book: newBook });
     } catch (error) {
-        res.status(500).json({
-            message:"Internal server error",
-            error:error.message
-        })
+        if (tempPath) await fs.unlink(tempPath).catch(() => {});
+        res.status(500).json({ message: "Internal server error", error: error.message });
     }
 })
 
@@ -165,16 +171,16 @@ router.delete("/delete/:id", protectRoutes, async (req, res) => {
             })
         }
 
-        if(book.image && book.image.includes("cloudinary")){
+        if (book.image && book.image.includes("cloudinary")) {
             try {
-                const publicId = book.image.split("/").pop().split(".")[0]
-                const resourceType = book.mediaType === "video" ? "video" : "image"
-                await cloudinary.uploader.destroy(publicId, { resource_type: resourceType })
+                const publicId = book.cloudinaryPublicId || book.image.split("/").pop().split(".")[0];
+                const resourceType = book.mediaType === "video" ? "video" : "image";
+                await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
             } catch (error) {
                 return res.status(500).json({
-                    message:"Error deleting media from Cloudinary",
-                    error:error.message
-                })
+                    message: "Error deleting media from Cloudinary",
+                    error: error.message,
+                });
             }
         }
         await bookModel.findByIdAndDelete(id)
