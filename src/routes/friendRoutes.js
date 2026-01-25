@@ -75,6 +75,20 @@ router.post("/request", protectRoutes, async (req, res) => {
       .populate("sender", "username profileImg")
       .populate("receiver", "username profileImg");
 
+    // Send notification to receiver
+    try {
+      const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+      if (receiverUser?.expoPushToken) {
+        sendExpoPush(receiverUser.expoPushToken, {
+          title: "New friend request",
+          body: `${req.user.username} sent you a friend request`,
+          data: { type: "friend_request", senderId: String(senderId) },
+        });
+      }
+    } catch (e) {
+      // Ignore notification errors
+    }
+
     res.status(201).json({
       message: "Friend request sent successfully",
       request: populatedRequest,

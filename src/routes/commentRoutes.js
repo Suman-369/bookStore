@@ -1,6 +1,9 @@
 import express from "express";
 import commentModel from "../models/commentModel.js";
+import bookModel from "../models/bookModel.js";
+import userModel from "../models/userModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const router = express.Router();
 
@@ -30,6 +33,37 @@ router.post("/:bookId", protectRoutes, async (req, res) => {
         path: "parentComment",
         populate: { path: "user", select: "username profileImg" },
       });
+
+    // Send notification
+    try {
+      const book = await bookModel.findById(bookId).populate("user").lean();
+      let notifyUserId = null;
+      
+      if (parentCommentId) {
+        // Reply to comment - notify the comment author
+        const parentComment = await commentModel.findById(parentCommentId).populate("user").lean();
+        if (parentComment?.user?._id && parentComment.user._id.toString() !== req.user._id.toString()) {
+          notifyUserId = parentComment.user._id;
+        }
+      } else if (book?.user?._id && book.user._id.toString() !== req.user._id.toString()) {
+        // Top-level comment - notify the post owner
+        notifyUserId = book.user._id;
+      }
+      
+      if (notifyUserId) {
+        const notifyUser = await userModel.findById(notifyUserId).select("expoPushToken").lean();
+        if (notifyUser?.expoPushToken) {
+          const commentText = text.trim().length > 60 ? text.trim().slice(0, 57) + "…" : text.trim();
+          sendExpoPush(notifyUser.expoPushToken, {
+            title: parentCommentId ? "New reply" : "New comment",
+            body: `${req.user.username}: ${commentText}`,
+            data: { type: "comment", bookId: String(bookId), commentId: String(newComment._id), userId: String(req.user._id) },
+          });
+        }
+      }
+    } catch (e) {
+      // Ignore notification errors
+    }
 
     res.status(201).json({
       message: "Comment added successfully",

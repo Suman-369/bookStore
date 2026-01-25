@@ -1,6 +1,9 @@
 import express from "express";
 import likeModel from "../models/likeModel.js";
+import bookModel from "../models/bookModel.js";
+import userModel from "../models/userModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const router = express.Router();
 
@@ -28,6 +31,24 @@ router.post("/:bookId", protectRoutes, async (req, res) => {
         user: userId,
         book: bookId,
       });
+      
+      // Send notification to book owner
+      try {
+        const book = await bookModel.findById(bookId).populate("user").lean();
+        if (book && book.user && book.user._id.toString() !== userId.toString()) {
+          const owner = await userModel.findById(book.user._id).select("expoPushToken").lean();
+          if (owner?.expoPushToken) {
+            sendExpoPush(owner.expoPushToken, {
+              title: "New like",
+              body: `${req.user.username} liked your post`,
+              data: { type: "like", bookId: String(bookId), userId: String(userId) },
+            });
+          }
+        }
+      } catch (e) {
+        // Ignore notification errors
+      }
+      
       return res.status(201).json({
         message: "Liked successfully",
         liked: true,
