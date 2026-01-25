@@ -1,5 +1,4 @@
 import jwt from "jsonwebtoken";
-import userModel from "../models/userModel.js";
 import messageModel from "../models/messageModel.js";
 
 const USER_ROOM_PREFIX = "user:";
