@@ -1,5 +1,8 @@
 import jwt from "jsonwebtoken";
 import messageModel from "../models/messageModel.js";
+import userModel from "../models/userModel.js";
+import * as onlineStore from "../lib/onlineStore.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const USER_ROOM_PREFIX = "user:";
 
@@ -28,9 +31,10 @@ export function setupSocket(io) {
   io.use(authMiddleware);
 
   io.on("connection", async (socket) => {
-    const userId = socket.data.userId;
+    const userId = String(socket.data.userId);
     const room = `${USER_ROOM_PREFIX}${userId}`;
     await socket.join(room);
+    onlineStore.add(userId);
 
     socket.on("send_message", async (payload, cb) => {
       const { receiverId, text } = payload || {};
@@ -62,6 +66,15 @@ export function setupSocket(io) {
 
         const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
         io.to(receiverRoom).emit("new_message", populated);
+        const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+        if (receiverUser?.expoPushToken) {
+          const senderName = populated.sender?.username || "Someone";
+          sendExpoPush(receiverUser.expoPushToken, {
+            title: senderName,
+            body: trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed,
+            data: { type: "message", senderId: String(userId), messageId: String(msg._id) },
+          });
+        }
         if (typeof cb === "function") cb(null, populated);
       } catch (e) {
         console.error("send_message error:", e);
@@ -69,6 +82,8 @@ export function setupSocket(io) {
       }
     });
 
-    socket.on("disconnect", () => {});
+    socket.on("disconnect", () => {
+      onlineStore.remove(userId);
+    });
   });
 }

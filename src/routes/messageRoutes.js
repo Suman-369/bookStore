@@ -2,6 +2,7 @@ import express from "express";
 import { protectRoutes } from "../middleware/auth.middleware.js";
 import messageModel from "../models/messageModel.js";
 import userModel from "../models/userModel.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const router = express.Router();
 const LIMIT = 50;
@@ -124,10 +125,28 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
 
     const reversed = messages.reverse();
 
-    await messageModel.updateMany(
-      { sender: otherUserId, receiver: userId, read: false },
-      { $set: { read: true } }
-    );
+    const toMark = await messageModel
+      .find({
+        sender: otherUserId,
+        receiver: userId,
+        read: false,
+      })
+      .select("_id")
+      .lean();
+    const markedIds = toMark.map((m) => m._id);
+    if (markedIds.length) {
+      await messageModel.updateMany(
+        { _id: { $in: markedIds } },
+        { $set: { read: true } }
+      );
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${otherUserId}`).emit("messages_read", {
+          messageIds: markedIds.map((id) => String(id)),
+          readBy: userId,
+        });
+      }
+    }
 
     return res.json({ messages: reversed, hasMore: messages.length === limit });
   } catch (err) {
@@ -171,6 +190,15 @@ router.post("/", protectRoutes, async (req, res) => {
     const io = req.app.get("io");
     if (io) {
       io.to(`user:${receiverId}`).emit("new_message", populated);
+    }
+
+    const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+    if (receiverUser?.expoPushToken) {
+      sendExpoPush(receiverUser.expoPushToken, {
+        title: req.user?.username || "New message",
+        body: trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed,
+        data: { type: "message", senderId: String(senderId), messageId: populated._id },
+      });
     }
 
     return res.status(201).json({ message: populated });

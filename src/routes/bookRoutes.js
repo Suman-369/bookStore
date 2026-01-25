@@ -66,7 +66,7 @@ router.get("/all", protectRoutes, async (req, res) => {
     try {
         const userId = req.user._id;
         const page = req.query.page||1
-        const limit  = req.query.limit || 2
+        const limit  = req.query.limit || 5
 
         const skip = (page-1)*limit
 

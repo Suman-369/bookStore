@@ -2,6 +2,7 @@ import express from "express";
 import friendModel from "../models/friendModel.js";
 import userModel from "../models/userModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const router = express.Router();
 
@@ -122,6 +123,16 @@ router.post("/accept", protectRoutes, async (req, res) => {
       .findById(friendRequest._id)
       .populate("sender", "username profileImg")
       .populate("receiver", "username profileImg");
+
+    const accepterName = req.user?.username || "Someone";
+    const senderUser = await userModel.findById(senderId).select("expoPushToken").lean();
+    if (senderUser?.expoPushToken) {
+      sendExpoPush(senderUser.expoPushToken, {
+        title: "Friend request accepted",
+        body: `${accepterName} accepted your friend request`,
+        data: { type: "friend_accept", accepterId: String(receiverId) },
+      });
+    }
 
     res.status(200).json({
       message: "Friend request accepted",

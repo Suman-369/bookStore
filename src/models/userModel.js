@@ -20,7 +20,8 @@ const userSchema = new mongoose.Schema({
     profileImg:{
         type:String,
         default:""
-    }
+    },
+    expoPushToken: { type: String, default: "" },
 },{timestamps:true})
 
 const userModel = mongoose.model("User",userSchema)
