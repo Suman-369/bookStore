@@ -77,7 +77,10 @@ export function setupSocket(io) {
           .lean();
 
         const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
+        const senderRoom = `${USER_ROOM_PREFIX}${userId}`;
+        // Emit to both receiver and sender so both can see the message
         io.to(receiverRoom).emit("new_message", populated);
+        io.to(senderRoom).emit("new_message", populated);
         const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
         if (receiverUser?.expoPushToken) {
           const senderName = populated.sender?.username || "Someone";
