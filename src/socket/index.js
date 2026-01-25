@@ -35,6 +35,18 @@ export function setupSocket(io) {
     const room = `${USER_ROOM_PREFIX}${userId}`;
     await socket.join(room);
     onlineStore.add(userId);
+    // Update last seen when user connects
+    await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
+    
+    // Update last seen periodically while user is online (every 5 minutes)
+    const lastSeenInterval = setInterval(async () => {
+      if (onlineStore.has(userId)) {
+        await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+    
+    // Store interval ID in socket data for cleanup
+    socket.data.lastSeenInterval = lastSeenInterval;
 
     socket.on("send_message", async (payload, cb) => {
       const { receiverId, text } = payload || {};
@@ -82,8 +94,14 @@ export function setupSocket(io) {
       }
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
+      // Clear the interval
+      if (socket.data.lastSeenInterval) {
+        clearInterval(socket.data.lastSeenInterval);
+      }
       onlineStore.remove(userId);
+      // Update last seen when user disconnects
+      await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
     });
   });
 }

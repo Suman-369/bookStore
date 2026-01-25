@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema({
         default:""
     },
     expoPushToken: { type: String, default: "" },
+    lastSeen: { type: Date, default: Date.now },
 },{timestamps:true})
 
 const userModel = mongoose.model("User",userSchema)

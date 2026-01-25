@@ -18,6 +18,24 @@ router.get("/online-status", protectRoutes, (req, res) => {
   }
 });
 
+/** GET /users/last-seen?ids=id1,id2 – returns { id1: "2024-01-01T00:00:00Z", id2: "2024-01-02T00:00:00Z" } */
+router.get("/last-seen", protectRoutes, async (req, res) => {
+  try {
+    const ids = req.query.ids;
+    const arr = Array.isArray(ids) ? ids : ids ? String(ids).split(",") : [];
+    if (!arr.length) return res.json({});
+    
+    const users = await userModel.find({ _id: { $in: arr } }).select("_id lastSeen").lean();
+    const lastSeenMap = {};
+    users.forEach((user) => {
+      lastSeenMap[String(user._id)] = user.lastSeen || user.createdAt || new Date();
+    });
+    return res.json(lastSeenMap);
+  } catch (e) {
+    return res.status(500).json({ message: "Failed to get last seen" });
+  }
+});
+
 /** POST /users/push-token – register Expo push token */
 router.post("/push-token", protectRoutes, async (req, res) => {
   try {
