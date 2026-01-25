@@ -1,4 +1,6 @@
+import http from "http";
 import express from "express";
+import { Server } from "socket.io";
 import "dotenv/config";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
@@ -7,20 +9,30 @@ import likeRoutes from "./routes/likeRoutes.js";
 import commentRoutes from "./routes/commentRoutes.js";
 import friendRoutes from "./routes/friendRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import messageRoutes from "./routes/messageRoutes.js";
 import connectDB from "./db/db.js";
 import cors from "cors";
-import job from "./db/cron.js"
+import job from "./db/cron.js";
+import { setupSocket } from "./socket/index.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
 
+const io = new Server(server, {
+  cors: { origin: "*" },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+app.set("io", io);
+setupSocket(io);
 
 connectDB();
-job.start()
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+job.start();
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
-app.use(cors())
+app.use(cors());
 
 app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
@@ -28,7 +40,8 @@ app.use("/api/likes", likeRoutes);
 app.use("/api/comments", commentRoutes);
 app.use("/api/friends", friendRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/messages", messageRoutes);
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
