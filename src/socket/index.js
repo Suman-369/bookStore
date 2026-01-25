@@ -97,6 +97,92 @@ export function setupSocket(io) {
       }
     });
 
+    // Typing indicators
+    socket.on("typing_start", (payload) => {
+      const { receiverId } = payload || {};
+      if (!receiverId || receiverId === userId) return;
+      const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
+      io.to(receiverRoom).emit("typing_start", { userId });
+    });
+
+    socket.on("typing_stop", (payload) => {
+      const { receiverId } = payload || {};
+      if (!receiverId || receiverId === userId) return;
+      const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
+      io.to(receiverRoom).emit("typing_stop", { userId });
+    });
+
+    // Mark messages as read in real-time
+    socket.on("mark_messages_read", async (payload) => {
+      const { otherUserId } = payload || {};
+      if (!otherUserId || otherUserId === userId) return;
+
+      try {
+        const toMark = await messageModel
+          .find({
+            sender: otherUserId,
+            receiver: userId,
+            read: false,
+          })
+          .select("_id")
+          .lean();
+        
+        const markedIds = toMark.map((m) => m._id);
+        if (markedIds.length) {
+          await messageModel.updateMany(
+            { _id: { $in: markedIds } },
+            { $set: { read: true } }
+          );
+          // Notify the sender that their messages were read
+          const senderRoom = `${USER_ROOM_PREFIX}${otherUserId}`;
+          io.to(senderRoom).emit("messages_read", {
+            messageIds: markedIds.map((id) => String(id)),
+            readBy: userId,
+          });
+        }
+      } catch (e) {
+        console.error("mark_messages_read error:", e);
+      }
+    });
+
+    // Delete message
+    socket.on("delete_message", async (payload, cb) => {
+      const { messageId } = payload || {};
+      if (!messageId) {
+        const err = { message: "messageId required" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      try {
+        const msg = await messageModel.findById(messageId).lean();
+        if (!msg) {
+          const err = { message: "Message not found" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        // Only sender can delete their own messages
+        if (String(msg.sender) !== userId) {
+          const err = { message: "Unauthorized - You can only delete your own messages" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        await messageModel.findByIdAndDelete(messageId);
+
+        // Notify both users about the deletion
+        const receiverId = String(msg.receiver);
+        const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
+        const senderRoom = `${USER_ROOM_PREFIX}${userId}`;
+        
+        io.to(receiverRoom).emit("message_deleted", { messageId: String(messageId) });
+        io.to(senderRoom).emit("message_deleted", { messageId: String(messageId) });
+
+        if (typeof cb === "function") cb(null, { success: true });
+      } catch (e) {
+        console.error("delete_message error:", e);
+        if (typeof cb === "function") cb({ message: "Failed to delete message" });
+      }
+    });
+
     socket.on("disconnect", async () => {
       // Clear the interval
       if (socket.data.lastSeenInterval) {

@@ -208,4 +208,42 @@ router.post("/", protectRoutes, async (req, res) => {
   }
 });
 
+/** DELETE /messages/:messageId – delete a message */
+router.delete("/:messageId", protectRoutes, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user._id.toString();
+
+    const msg = await messageModel.findById(messageId);
+    if (!msg) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    // Only sender can delete their own messages
+    if (String(msg.sender) !== userId) {
+      return res.status(403).json({
+        message: "Unauthorized - You can only delete your own messages",
+      });
+    }
+
+    await messageModel.findByIdAndDelete(messageId);
+
+    // Notify both users via socket
+    const io = req.app.get("io");
+    if (io) {
+      const receiverId = String(msg.receiver);
+      const receiverRoom = `user:${receiverId}`;
+      const senderRoom = `user:${userId}`;
+      
+      io.to(receiverRoom).emit("message_deleted", { messageId: String(messageId) });
+      io.to(senderRoom).emit("message_deleted", { messageId: String(messageId) });
+    }
+
+    return res.status(200).json({ message: "Message deleted successfully" });
+  } catch (err) {
+    console.error("DELETE /messages/:messageId", err);
+    return res.status(500).json({ message: "Failed to delete message" });
+  }
+});
+
 export default router;

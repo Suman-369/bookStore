@@ -13,11 +13,13 @@ export async function sendExpoPush(to, { title, body, data = {} }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to,
-        title: title || "Notification",
+        title: title || "Your Meme's",
         body: body || "",
         data: { ...data },
         sound: "default",
         channelId: "default",
+        priority: "high",
+        badge: 1,
       }),
     });
     if (!res.ok) {
