@@ -125,7 +125,7 @@ router.get("/user", protectRoutes, async (req, res) => {
     }
 })
 
-//get specific user's books
+//get specific user's books (must be before /:id route)
 router.get("/user/:userId", protectRoutes, async (req, res) => {
     try {
         const { userId } = req.params;
@@ -154,6 +154,43 @@ router.get("/user/:userId", protectRoutes, async (req, res) => {
     }
 })
 
+//get a single book by ID (must be after all specific routes)
+router.get("/:id", protectRoutes, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user._id;
+        
+        const book = await bookModel.findById(id)
+            .populate("user", "username profileImg");
+        
+        if (!book) {
+            return res.status(404).json({
+                message: "Book not found",
+            });
+        }
+
+        // Get likes and comments count, and check if current user liked
+        const likesCount = await likeModel.countDocuments({ book: book._id });
+        const commentsCount = await commentModel.countDocuments({ book: book._id });
+        const isLiked = await likeModel.findOne({ user: userId, book: book._id });
+
+        const bookWithStats = {
+            ...book.toObject(),
+            likesCount,
+            commentsCount,
+            isLiked: !!isLiked,
+        };
+
+        res.status(200).json({
+            book: bookWithStats,
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: "Internal server error",
+            error: error.message,
+        });
+    }
+});
 
 //delete a book
 router.delete("/delete/:id", protectRoutes, async (req, res) => {
