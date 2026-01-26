@@ -164,6 +164,8 @@ router.post("/", protectRoutes, async (req, res) => {
   try {
     const { receiverId, text, voiceMessage } = req.body;
     const senderId = req.user._id;
+    const receiverIdStr = receiverId ? String(receiverId) : "";
+    const senderIdStr = String(senderId);
 
     if (!receiverId) {
       return res.status(400).json({ message: "receiverId is required" });
@@ -185,13 +187,19 @@ router.post("/", protectRoutes, async (req, res) => {
     }
 
     // Check if receiver has blocked the sender
-    if (receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+    const receiverBlocked = (receiver.blockedUsers || []).some(
+      (id) => String(id) === senderIdStr,
+    );
+    if (receiverBlocked) {
       return res.status(403).json({ message: "You cannot send messages to this user" });
     }
 
     // Check if sender has blocked the receiver
     const sender = await userModel.findById(senderId).select("blockedUsers");
-    if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+    const senderBlocked = (sender.blockedUsers || []).some(
+      (id) => String(id) === receiverIdStr,
+    );
+    if (senderBlocked) {
       return res.status(403).json({ message: "You have blocked this user" });
     }
 
@@ -254,6 +262,8 @@ router.post("/voice", protectRoutes, (req, res, next) => {
   try {
     const { receiverId, duration } = req.body;
     const senderId = req.user._id;
+    const receiverIdStr = receiverId ? String(receiverId) : "";
+    const senderIdStr = String(senderId);
     const file = req.file;
 
     if (!receiverId) {
@@ -270,13 +280,19 @@ router.post("/voice", protectRoutes, (req, res, next) => {
     }
 
     // Check if receiver has blocked the sender
-    if (receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+    const receiverBlocked = (receiver.blockedUsers || []).some(
+      (id) => String(id) === senderIdStr,
+    );
+    if (receiverBlocked) {
       return res.status(403).json({ message: "You cannot send messages to this user" });
     }
 
     // Check if sender has blocked the receiver
     const sender = await userModel.findById(senderId).select("blockedUsers");
-    if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+    const senderBlocked = (sender.blockedUsers || []).some(
+      (id) => String(id) === receiverIdStr,
+    );
+    if (senderBlocked) {
       return res.status(403).json({ message: "You have blocked this user" });
     }
 

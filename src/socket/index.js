@@ -54,6 +54,9 @@ export function setupSocket(io) {
         const err = { message: "receiverId is required" };
         return typeof cb === "function" ? cb(err) : null;
       }
+
+      const receiverIdStr = String(receiverId);
+      const senderIdStr = String(userId);
       
       // Either text or voiceMessage must be provided
       if (!text && !voiceMessage) {
@@ -79,14 +82,20 @@ export function setupSocket(io) {
           const err = { message: "User not found" };
           return typeof cb === "function" ? cb(err) : null;
         }
-        if (receiver.blockedUsers && receiver.blockedUsers.includes(userId)) {
+        const receiverBlocked = (receiver.blockedUsers || []).some(
+          (id) => String(id) === senderIdStr,
+        );
+        if (receiverBlocked) {
           const err = { message: "You cannot send messages to this user" };
           return typeof cb === "function" ? cb(err) : null;
         }
 
         // Check if sender has blocked the receiver
         const sender = await userModel.findById(userId).select("blockedUsers").lean();
-        if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+        const senderBlocked = (sender.blockedUsers || []).some(
+          (id) => String(id) === receiverIdStr,
+        );
+        if (senderBlocked) {
           const err = { message: "You have blocked this user" };
           return typeof cb === "function" ? cb(err) : null;
         }
