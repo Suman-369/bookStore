@@ -1,5 +1,8 @@
 import express from "express";
+import fs from "fs/promises";
+import cloudinary from "../db/cloudinary.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
+import { uploadVoiceMessage } from "../middleware/upload.middleware.js";
 import messageModel from "../models/messageModel.js";
 import userModel from "../models/userModel.js";
 import { sendExpoPush } from "../lib/pushNotifications.js";
@@ -73,7 +76,8 @@ router.get("/conversations", protectRoutes, async (req, res) => {
       email: c.email,
       lastMessage: c.lastMessage
         ? {
-            text: c.lastMessage.text,
+            text: c.lastMessage.text || (c.lastMessage.voiceMessage ? "🎤 Voice message" : ""),
+            voiceMessage: c.lastMessage.voiceMessage || null,
             createdAt: c.lastMessage.createdAt,
             sender: c.lastMessage.sender,
             read: c.lastMessage.read,
@@ -158,15 +162,20 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
 /** POST /messages – send message (persist). Used when socket unavailable or fallback. */
 router.post("/", protectRoutes, async (req, res) => {
   try {
-    const { receiverId, text } = req.body;
+    const { receiverId, text, voiceMessage } = req.body;
     const senderId = req.user._id;
 
-    if (!receiverId || !text || typeof text !== "string") {
-      return res.status(400).json({ message: "receiverId and text required" });
+    if (!receiverId) {
+      return res.status(400).json({ message: "receiverId is required" });
     }
 
-    const trimmed = text.trim();
-    if (!trimmed) {
+    // Either text or voiceMessage must be provided
+    if (!text && !voiceMessage) {
+      return res.status(400).json({ message: "Either text or voiceMessage is required" });
+    }
+
+    const trimmed = text ? text.trim() : "";
+    if (text && !trimmed) {
       return res.status(400).json({ message: "Message cannot be empty" });
     }
 
@@ -186,10 +195,107 @@ router.post("/", protectRoutes, async (req, res) => {
       return res.status(403).json({ message: "You have blocked this user" });
     }
 
+    const msgData = {
+      sender: senderId,
+      receiver: receiverId,
+    };
+
+    if (voiceMessage) {
+      msgData.voiceMessage = voiceMessage;
+    } else {
+      msgData.text = trimmed;
+    }
+
+    const msg = await messageModel.create(msgData);
+
+    const populated = await messageModel
+      .findById(msg._id)
+      .populate("sender", "username profileImg")
+      .populate("receiver", "username profileImg")
+      .lean();
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${receiverId}`).emit("new_message", populated);
+    }
+
+    const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+    if (receiverUser?.expoPushToken) {
+      const notificationBody = voiceMessage 
+        ? "🎤 Voice message" 
+        : (trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed);
+      sendExpoPush(receiverUser.expoPushToken, {
+        title: req.user?.username || "New message",
+        body: notificationBody,
+        data: { type: "message", senderId: String(senderId), messageId: populated._id },
+      });
+    }
+
+    return res.status(201).json({ message: populated });
+  } catch (err) {
+    console.error("POST /messages", err);
+    return res.status(500).json({ message: "Failed to send message" });
+  }
+});
+
+/** POST /messages/voice – upload and send voice message */
+router.post("/voice", protectRoutes, (req, res, next) => {
+  uploadVoiceMessage(req, res, (err) => {
+    if (err) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ message: "Voice message too large. Maximum 10MB." });
+      }
+      return res.status(400).json({ message: err.message || "Upload failed" });
+    }
+    next();
+  });
+}, async (req, res) => {
+  let tempPath = null;
+  try {
+    const { receiverId, duration } = req.body;
+    const senderId = req.user._id;
+    const file = req.file;
+
+    if (!receiverId) {
+      return res.status(400).json({ message: "receiverId is required" });
+    }
+
+    if (!file) {
+      return res.status(400).json({ message: "Voice file is required" });
+    }
+
+    const receiver = await userModel.findById(receiverId).select("_id blockedUsers");
+    if (!receiver) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if receiver has blocked the sender
+    if (receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+      return res.status(403).json({ message: "You cannot send messages to this user" });
+    }
+
+    // Check if sender has blocked the receiver
+    const sender = await userModel.findById(senderId).select("blockedUsers");
+    if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+      return res.status(403).json({ message: "You have blocked this user" });
+    }
+
+    tempPath = file.path;
+    const uploadOptions = { resource_type: "video" }; // Cloudinary treats audio as video
+    const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
+    const voiceUrl = result.secure_url;
+    const publicId = result.public_id || null;
+    await fs.unlink(tempPath).catch(() => {});
+    tempPath = null;
+
     const msg = await messageModel.create({
       sender: senderId,
       receiver: receiverId,
-      text: trimmed,
+      voiceMessage: {
+        url: voiceUrl,
+        duration: duration ? parseInt(duration, 10) : 0,
+        cloudinaryPublicId: publicId,
+      },
     });
 
     const populated = await messageModel
@@ -207,15 +313,18 @@ router.post("/", protectRoutes, async (req, res) => {
     if (receiverUser?.expoPushToken) {
       sendExpoPush(receiverUser.expoPushToken, {
         title: req.user?.username || "New message",
-        body: trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed,
+        body: "🎤 Voice message",
         data: { type: "message", senderId: String(senderId), messageId: populated._id },
       });
     }
 
     return res.status(201).json({ message: populated });
   } catch (err) {
-    console.error("POST /messages", err);
-    return res.status(500).json({ message: "Failed to send message" });
+    if (tempPath) {
+      await fs.unlink(tempPath).catch(() => {});
+    }
+    console.error("POST /messages/voice", err);
+    return res.status(500).json({ message: "Failed to send voice message" });
   }
 });
 

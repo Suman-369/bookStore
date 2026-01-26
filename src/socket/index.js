@@ -49,16 +49,24 @@ export function setupSocket(io) {
     socket.data.lastSeenInterval = lastSeenInterval;
 
     socket.on("send_message", async (payload, cb) => {
-      const { receiverId, text } = payload || {};
-      if (!receiverId || !text || typeof text !== "string") {
-        const err = { message: "receiverId and text required" };
+      const { receiverId, text, voiceMessage } = payload || {};
+      if (!receiverId) {
+        const err = { message: "receiverId is required" };
         return typeof cb === "function" ? cb(err) : null;
       }
-      const trimmed = text.trim();
-      if (!trimmed) {
+      
+      // Either text or voiceMessage must be provided
+      if (!text && !voiceMessage) {
+        const err = { message: "Either text or voiceMessage is required" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      const trimmed = text ? text.trim() : "";
+      if (text && !trimmed) {
         const err = { message: "Message cannot be empty" };
         return typeof cb === "function" ? cb(err) : null;
       }
+      
       if (receiverId === userId) {
         const err = { message: "Cannot message yourself" };
         return typeof cb === "function" ? cb(err) : null;
@@ -82,11 +90,19 @@ export function setupSocket(io) {
           const err = { message: "You have blocked this user" };
           return typeof cb === "function" ? cb(err) : null;
         }
-        const msg = await messageModel.create({
+        
+        const msgData = {
           sender: userId,
           receiver: receiverId,
-          text: trimmed,
-        });
+        };
+
+        if (voiceMessage) {
+          msgData.voiceMessage = voiceMessage;
+        } else {
+          msgData.text = trimmed;
+        }
+
+        const msg = await messageModel.create(msgData);
         const populated = await messageModel
           .findById(msg._id)
           .populate("sender", "username profileImg")
@@ -101,9 +117,12 @@ export function setupSocket(io) {
         const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
         if (receiverUser?.expoPushToken) {
           const senderName = populated.sender?.username || "Someone";
+          const notificationBody = voiceMessage 
+            ? "🎤 Voice message" 
+            : (trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed);
           sendExpoPush(receiverUser.expoPushToken, {
             title: senderName,
-            body: trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed,
+            body: notificationBody,
             data: { type: "message", senderId: String(userId), messageId: String(msg._id) },
           });
         }
