@@ -4,12 +4,26 @@ const messageSchema = new mongoose.Schema(
   {
     sender: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     receiver: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    text: { type: String, required: function() { return !this.voiceMessage; }, trim: true },
+    text: { type: String, required: function() { return !this.voiceMessage && !this.encryptedMessage; }, trim: true },
     voiceMessage: {
       url: { type: String },
       duration: { type: Number }, // Duration in seconds
       cloudinaryPublicId: { type: String },
     },
+    // End-to-End Encryption fields
+    encryptedMessage: {
+      type: String, // Base64 encoded encrypted message
+      default: "",
+    },
+    encryptedSymmetricKey: {
+      type: String, // Base64 encoded encrypted AES key
+      default: "",
+    },
+    nonce: {
+      type: String, // Base64 encoded nonce
+      default: "",
+    },
+    isEncrypted: { type: Boolean, default: false },
     read: { type: Boolean, default: false },
   },
   { timestamps: true }

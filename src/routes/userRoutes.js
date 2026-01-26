@@ -3,6 +3,7 @@ import userModel from "../models/userModel.js";
 import bookModel from "../models/bookModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
 import * as onlineStore from "../lib/onlineStore.js";
+import { validatePublicKey } from "../utils/cryptoUtils.js";
 
 const router = express.Router();
 
@@ -50,6 +51,72 @@ router.post("/push-token", protectRoutes, async (req, res) => {
     return res.json({ message: "Push token registered" });
   } catch (e) {
     return res.status(500).json({ message: "Failed to register push token" });
+  }
+});
+
+/** GET /users/:userId/public-key – get user's public key for E2EE */
+router.get("/:userId/public-key", protectRoutes, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await userModel.findById(userId).select("publicKey _id").lean();
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    if (!user.publicKey) {
+      return res.status(400).json({
+        message: "User has not set up E2EE yet",
+      });
+    }
+
+    return res.json({
+      userId: user._id,
+      publicKey: user.publicKey,
+    });
+  } catch (error) {
+    console.error("GET /users/:userId/public-key", error);
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
+});
+
+/** POST /users/upload-public-key – upload user's public key */
+router.post("/upload-public-key", protectRoutes, async (req, res) => {
+  try {
+    const { publicKey } = req.body;
+    const userId = req.user._id;
+
+    if (!publicKey || typeof publicKey !== "string") {
+      return res.status(400).json({
+        message: "Public key is required and must be a string",
+      });
+    }
+
+    // Validate public key format
+    if (!validatePublicKey(publicKey)) {
+      return res.status(400).json({
+        message: "Invalid public key format",
+      });
+    }
+
+    // Update user's public key
+    await userModel.findByIdAndUpdate(userId, {
+      $set: { publicKey: publicKey.trim() },
+    });
+
+    return res.json({
+      message: "Public key uploaded successfully",
+    });
+  } catch (error) {
+    console.error("POST /users/upload-public-key", error);
+    return res.status(500).json({
+      message: "Failed to upload public key",
+    });
   }
 });
 

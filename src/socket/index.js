@@ -3,13 +3,12 @@ import messageModel from "../models/messageModel.js";
 import userModel from "../models/userModel.js";
 import * as onlineStore from "../lib/onlineStore.js";
 import { sendExpoPush } from "../lib/pushNotifications.js";
+import { validatePublicKey } from "../utils/cryptoUtils.js";
 
 const USER_ROOM_PREFIX = "user:";
 
 function authMiddleware(socket, next) {
-  const token =
-    socket.handshake?.auth?.token ||
-    socket.handshake?.query?.token;
+  const token = socket.handshake?.auth?.token || socket.handshake?.query?.token;
   if (!token) {
     return next(new Error("Unauthorized: no token"));
   }
@@ -37,19 +36,32 @@ export function setupSocket(io) {
     onlineStore.add(userId);
     // Update last seen when user connects
     await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
-    
+
     // Update last seen periodically while user is online (every 5 minutes)
-    const lastSeenInterval = setInterval(async () => {
-      if (onlineStore.has(userId)) {
-        await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
-      }
-    }, 5 * 60 * 1000); // 5 minutes
-    
+    const lastSeenInterval = setInterval(
+      async () => {
+        if (onlineStore.has(userId)) {
+          await userModel.findByIdAndUpdate(userId, { lastSeen: new Date() });
+        }
+      },
+      5 * 60 * 1000,
+    ); // 5 minutes
+
     // Store interval ID in socket data for cleanup
     socket.data.lastSeenInterval = lastSeenInterval;
 
     socket.on("send_message", async (payload, cb) => {
-      const { receiverId, text, voiceMessage } = payload || {};
+      const {
+        receiverId,
+        text,
+        voiceMessage,
+        // E2EE fields
+        encryptedMessage,
+        encryptedSymmetricKey,
+        nonce,
+        isEncrypted,
+      } = payload || {};
+
       if (!receiverId) {
         const err = { message: "receiverId is required" };
         return typeof cb === "function" ? cb(err) : null;
@@ -57,27 +69,34 @@ export function setupSocket(io) {
 
       const receiverIdStr = String(receiverId);
       const senderIdStr = String(userId);
-      
-      // Either text or voiceMessage must be provided
-      if (!text && !voiceMessage) {
-        const err = { message: "Either text or voiceMessage is required" };
+
+      // For encrypted messages, check for E2EE fields; for plain, check text/voiceMessage
+      const isE2EEMessage = encryptedMessage && encryptedSymmetricKey && nonce;
+      if (!isE2EEMessage && !text && !voiceMessage) {
+        const err = {
+          message: "Either encrypted message or text/voiceMessage is required",
+        };
         return typeof cb === "function" ? cb(err) : null;
       }
 
+      // Validate plain text messages
       const trimmed = text ? text.trim() : "";
       if (text && !trimmed) {
         const err = { message: "Message cannot be empty" };
         return typeof cb === "function" ? cb(err) : null;
       }
-      
+
       if (receiverId === userId) {
         const err = { message: "Cannot message yourself" };
         return typeof cb === "function" ? cb(err) : null;
       }
 
       try {
-        // Check if receiver has blocked the sender
-        const receiver = await userModel.findById(receiverId).select("blockedUsers").lean();
+        // Check if receiver has blocked by the sender
+        const receiver = await userModel
+          .findById(receiverId)
+          .select("blockedUsers")
+          .lean();
         if (!receiver) {
           const err = { message: "User not found" };
           return typeof cb === "function" ? cb(err) : null;
@@ -86,12 +105,18 @@ export function setupSocket(io) {
           (id) => String(id) === senderIdStr,
         );
         if (receiverBlocked) {
-          const err = { message: "You are blocked from this user. You cannot send messages to this user." };
+          const err = {
+            message:
+              "You are blocked from this user. You cannot send messages to this user.",
+          };
           return typeof cb === "function" ? cb(err) : null;
         }
 
         // Check if sender has blocked the receiver
-        const sender = await userModel.findById(userId).select("blockedUsers").lean();
+        const sender = await userModel
+          .findById(userId)
+          .select("blockedUsers")
+          .lean();
         const senderBlocked = (sender.blockedUsers || []).some(
           (id) => String(id) === receiverIdStr,
         );
@@ -99,16 +124,24 @@ export function setupSocket(io) {
           const err = { message: "You have blocked this user" };
           return typeof cb === "function" ? cb(err) : null;
         }
-        
+
         const msgData = {
           sender: userId,
           receiver: receiverId,
         };
 
-        if (voiceMessage) {
+        // Handle E2EE encrypted messages
+        if (isE2EEMessage) {
+          msgData.encryptedMessage = encryptedMessage;
+          msgData.encryptedSymmetricKey = encryptedSymmetricKey;
+          msgData.nonce = nonce;
+          msgData.isEncrypted = true;
+        } else if (voiceMessage) {
           msgData.voiceMessage = voiceMessage;
+          msgData.isEncrypted = false;
         } else {
           msgData.text = trimmed;
+          msgData.isEncrypted = false;
         }
 
         const msg = await messageModel.create(msgData);
@@ -123,18 +156,33 @@ export function setupSocket(io) {
         // Emit to both receiver and sender so both can see the message
         io.to(receiverRoom).emit("new_message", populated);
         io.to(senderRoom).emit("new_message", populated);
-        const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+
+        const receiverUser = await userModel
+          .findById(receiverId)
+          .select("expoPushToken")
+          .lean();
         if (receiverUser?.expoPushToken) {
           const senderName = populated.sender?.username || "Someone";
-          const notificationBody = voiceMessage 
-            ? "🎤 Voice message" 
-            : (trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed);
+          let notificationBody;
+          if (isE2EEMessage) {
+            notificationBody = "🔒 Encrypted message";
+          } else if (voiceMessage) {
+            notificationBody = "🎤 Voice message";
+          } else {
+            notificationBody =
+              trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
+          }
           sendExpoPush(receiverUser.expoPushToken, {
             title: senderName,
             body: notificationBody,
-            data: { type: "message", senderId: String(userId), messageId: String(msg._id) },
+            data: {
+              type: "message",
+              senderId: String(userId),
+              messageId: String(msg._id),
+            },
           });
         }
+
         if (typeof cb === "function") cb(null, populated);
       } catch (e) {
         console.error("send_message error:", e);
@@ -171,12 +219,12 @@ export function setupSocket(io) {
           })
           .select("_id")
           .lean();
-        
+
         const markedIds = toMark.map((m) => m._id);
         if (markedIds.length) {
           await messageModel.updateMany(
             { _id: { $in: markedIds } },
-            { $set: { read: true } }
+            { $set: { read: true } },
           );
           // Notify the sender that their messages were read
           const senderRoom = `${USER_ROOM_PREFIX}${otherUserId}`;
@@ -207,7 +255,9 @@ export function setupSocket(io) {
 
         // Only sender can delete their own messages
         if (String(msg.sender) !== userId) {
-          const err = { message: "Unauthorized - You can only delete your own messages" };
+          const err = {
+            message: "Unauthorized - You can only delete your own messages",
+          };
           return typeof cb === "function" ? cb(err) : null;
         }
 
@@ -217,14 +267,19 @@ export function setupSocket(io) {
         const receiverId = String(msg.receiver);
         const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
         const senderRoom = `${USER_ROOM_PREFIX}${userId}`;
-        
-        io.to(receiverRoom).emit("message_deleted", { messageId: String(messageId) });
-        io.to(senderRoom).emit("message_deleted", { messageId: String(messageId) });
+
+        io.to(receiverRoom).emit("message_deleted", {
+          messageId: String(messageId),
+        });
+        io.to(senderRoom).emit("message_deleted", {
+          messageId: String(messageId),
+        });
 
         if (typeof cb === "function") cb(null, { success: true });
       } catch (e) {
         console.error("delete_message error:", e);
-        if (typeof cb === "function") cb({ message: "Failed to delete message" });
+        if (typeof cb === "function")
+          cb({ message: "Failed to delete message" });
       }
     });
 
