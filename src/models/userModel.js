@@ -33,6 +33,10 @@ const userSchema = new mongoose.Schema(
       type: String, // Base64 encoded Curve25519 public key
       default: "",
     },
+    e2eeEnabled: {
+      type: Boolean,
+      default: false, // Only true after public key successfully uploaded
+    },
   },
   { timestamps: true },
 );

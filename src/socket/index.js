@@ -70,19 +70,27 @@ export function setupSocket(io) {
       const receiverIdStr = String(receiverId);
       const senderIdStr = String(userId);
 
-      // For encrypted messages, check for E2EE fields; for plain, check text/voiceMessage
+      // CRITICAL: Check for E2EE encrypted message
       const isE2EEMessage = encryptedMessage && encryptedSymmetricKey && nonce;
-      if (!isE2EEMessage && !text && !voiceMessage) {
+
+      // BLOCK: Do NOT accept plaintext text messages from regular send
+      // Only accept encrypted messages or voice messages
+      if (!isE2EEMessage && text) {
         const err = {
-          message: "Either encrypted message or text/voiceMessage is required",
+          message:
+            "❌ PLAINTEXT MESSAGES NOT ALLOWED. Encryption is mandatory. Please enable E2EE.",
         };
+        console.error(
+          `🚫 Blocked plaintext message from ${senderIdStr} to ${receiverIdStr}`,
+        );
         return typeof cb === "function" ? cb(err) : null;
       }
 
-      // Validate plain text messages
-      const trimmed = text ? text.trim() : "";
-      if (text && !trimmed) {
-        const err = { message: "Message cannot be empty" };
+      if (!isE2EEMessage && !voiceMessage) {
+        const err = {
+          message:
+            "Encrypted message (with encryptedMessage, encryptedSymmetricKey, nonce) is required",
+        };
         return typeof cb === "function" ? cb(err) : null;
       }
 
@@ -95,12 +103,26 @@ export function setupSocket(io) {
         // Check if receiver has blocked by the sender
         const receiver = await userModel
           .findById(receiverId)
-          .select("blockedUsers")
+          .select("blockedUsers e2eeEnabled")
           .lean();
         if (!receiver) {
           const err = { message: "User not found" };
           return typeof cb === "function" ? cb(err) : null;
         }
+
+        // CRITICAL: Verify recipient has E2EE enabled for encrypted messages
+        if (isE2EEMessage && !receiver.e2eeEnabled) {
+          const err = {
+            message:
+              "Recipient has not enabled E2EE yet. Cannot send encrypted message.",
+            e2eeEnabled: false,
+          };
+          console.warn(
+            `⚠️  Recipient ${receiverIdStr} doesn't have E2EE enabled`,
+          );
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
         const receiverBlocked = (receiver.blockedUsers || []).some(
           (id) => String(id) === senderIdStr,
         );
@@ -130,18 +152,23 @@ export function setupSocket(io) {
           receiver: receiverId,
         };
 
-        // Handle E2EE encrypted messages
+        // Handle E2EE encrypted messages ONLY
         if (isE2EEMessage) {
           msgData.encryptedMessage = encryptedMessage;
           msgData.encryptedSymmetricKey = encryptedSymmetricKey;
           msgData.nonce = nonce;
           msgData.isEncrypted = true;
+          console.log(
+            `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
+          );
         } else if (voiceMessage) {
+          // Voice messages are still allowed unencrypted (they're already binary)
           msgData.voiceMessage = voiceMessage;
           msgData.isEncrypted = false;
         } else {
-          msgData.text = trimmed;
-          msgData.isEncrypted = false;
+          // Should never reach here due to validation above, but belt-and-suspenders
+          const err = { message: "Invalid message format" };
+          return typeof cb === "function" ? cb(err) : null;
         }
 
         const msg = await messageModel.create(msgData);
@@ -169,8 +196,7 @@ export function setupSocket(io) {
           } else if (voiceMessage) {
             notificationBody = "🎤 Voice message";
           } else {
-            notificationBody =
-              trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed;
+            notificationBody = "New message";
           }
           sendExpoPush(receiverUser.expoPushToken, {
             title: senderName,

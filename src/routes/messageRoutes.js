@@ -24,11 +24,7 @@ router.get("/conversations", protectRoutes, async (req, res) => {
       {
         $group: {
           _id: {
-            $cond: [
-              { $eq: ["$sender", req.user._id] },
-              "$receiver",
-              "$sender",
-            ],
+            $cond: [{ $eq: ["$sender", req.user._id] }, "$receiver", "$sender"],
           },
           lastMessage: { $first: "$$ROOT" },
           unreadCount: {
@@ -76,7 +72,9 @@ router.get("/conversations", protectRoutes, async (req, res) => {
       email: c.email,
       lastMessage: c.lastMessage
         ? {
-            text: c.lastMessage.text || (c.lastMessage.voiceMessage ? "🎤 Voice message" : ""),
+            text:
+              c.lastMessage.text ||
+              (c.lastMessage.voiceMessage ? "🎤 Voice message" : ""),
             voiceMessage: c.lastMessage.voiceMessage || null,
             createdAt: c.lastMessage.createdAt,
             sender: c.lastMessage.sender,
@@ -141,7 +139,7 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
     if (markedIds.length) {
       await messageModel.updateMany(
         { _id: { $in: markedIds } },
-        { $set: { read: true } }
+        { $set: { read: true } },
       );
       const io = req.app.get("io");
       if (io) {
@@ -162,7 +160,15 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
 /** POST /messages – send message (persist). Used when socket unavailable or fallback. */
 router.post("/", protectRoutes, async (req, res) => {
   try {
-    const { receiverId, text, voiceMessage } = req.body;
+    const {
+      receiverId,
+      text,
+      voiceMessage,
+      encryptedMessage,
+      encryptedSymmetricKey,
+      nonce,
+      isEncrypted,
+    } = req.body;
     const senderId = req.user._id;
     const receiverIdStr = receiverId ? String(receiverId) : "";
     const senderIdStr = String(senderId);
@@ -171,19 +177,46 @@ router.post("/", protectRoutes, async (req, res) => {
       return res.status(400).json({ message: "receiverId is required" });
     }
 
-    // Either text or voiceMessage must be provided
-    if (!text && !voiceMessage) {
-      return res.status(400).json({ message: "Either text or voiceMessage is required" });
+    // CRITICAL: Check for encrypted message
+    const isE2EEMessage = encryptedMessage && encryptedSymmetricKey && nonce;
+
+    // BLOCK: Do NOT accept plaintext text messages
+    if (!isE2EEMessage && text) {
+      console.error(
+        `🚫 Blocked plaintext message from ${senderIdStr} to ${receiverIdStr}`,
+      );
+      return res.status(403).json({
+        message:
+          "❌ PLAINTEXT MESSAGES NOT ALLOWED. Encryption is mandatory. Please enable E2EE.",
+        code: "E2EE_REQUIRED",
+      });
     }
 
-    const trimmed = text ? text.trim() : "";
-    if (text && !trimmed) {
-      return res.status(400).json({ message: "Message cannot be empty" });
+    // Either encrypted message or voiceMessage must be provided
+    if (!isE2EEMessage && !voiceMessage) {
+      return res.status(400).json({
+        message:
+          "Encrypted message (with encryptedMessage, encryptedSymmetricKey, nonce) or voiceMessage is required",
+        code: "INVALID_MESSAGE_FORMAT",
+      });
     }
 
-    const receiver = await userModel.findById(receiverId).select("_id blockedUsers");
+    const receiver = await userModel
+      .findById(receiverId)
+      .select("_id blockedUsers e2eeEnabled");
     if (!receiver) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    // CRITICAL: Verify recipient has E2EE enabled for encrypted messages
+    if (isE2EEMessage && !receiver.e2eeEnabled) {
+      console.warn(`⚠️  Recipient ${receiverIdStr} doesn't have E2EE enabled`);
+      return res.status(403).json({
+        message:
+          "Recipient has not enabled E2EE yet. Cannot send encrypted message.",
+        e2eeEnabled: false,
+        code: "E2EE_NOT_ENABLED",
+      });
     }
 
     // Check if receiver has blocked the sender
@@ -191,7 +224,12 @@ router.post("/", protectRoutes, async (req, res) => {
       (id) => String(id) === senderIdStr,
     );
     if (receiverBlocked) {
-      return res.status(403).json({ message: "You are blocked from this user. You cannot send messages to this user." });
+      return res
+        .status(403)
+        .json({
+          message:
+            "You are blocked from this user. You cannot send messages to this user.",
+        });
     }
 
     // Check if sender has blocked the receiver
@@ -208,10 +246,19 @@ router.post("/", protectRoutes, async (req, res) => {
       receiver: receiverId,
     };
 
-    if (voiceMessage) {
+    // Handle E2EE encrypted messages
+    if (isE2EEMessage) {
+      msgData.encryptedMessage = encryptedMessage;
+      msgData.encryptedSymmetricKey = encryptedSymmetricKey;
+      msgData.nonce = nonce;
+      msgData.isEncrypted = true;
+      console.log(
+        `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
+      );
+    } else if (voiceMessage) {
+      // Voice messages are still allowed unencrypted
       msgData.voiceMessage = voiceMessage;
-    } else {
-      msgData.text = trimmed;
+      msgData.isEncrypted = false;
     }
 
     const msg = await messageModel.create(msgData);
@@ -227,15 +274,27 @@ router.post("/", protectRoutes, async (req, res) => {
       io.to(`user:${receiverId}`).emit("new_message", populated);
     }
 
-    const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
+    const receiverUser = await userModel
+      .findById(receiverId)
+      .select("expoPushToken")
+      .lean();
     if (receiverUser?.expoPushToken) {
-      const notificationBody = voiceMessage 
-        ? "🎤 Voice message" 
-        : (trimmed.length > 80 ? trimmed.slice(0, 77) + "…" : trimmed);
+      let notificationBody;
+      if (isE2EEMessage) {
+        notificationBody = "🔒 Encrypted message";
+      } else if (voiceMessage) {
+        notificationBody = "🎤 Voice message";
+      } else {
+        notificationBody = "New message";
+      }
       sendExpoPush(receiverUser.expoPushToken, {
         title: req.user?.username || "New message",
         body: notificationBody,
-        data: { type: "message", senderId: String(senderId), messageId: populated._id },
+        data: {
+          type: "message",
+          senderId: String(senderId),
+          messageId: populated._id,
+        },
       });
     }
 
@@ -247,102 +306,125 @@ router.post("/", protectRoutes, async (req, res) => {
 });
 
 /** POST /messages/voice – upload and send voice message */
-router.post("/voice", protectRoutes, (req, res, next) => {
-  uploadVoiceMessage(req, res, (err) => {
-    if (err) {
-      if (err.code === "LIMIT_FILE_SIZE") {
-        return res.status(413).json({ message: "Voice message too large. Maximum 10MB." });
+router.post(
+  "/voice",
+  protectRoutes,
+  (req, res, next) => {
+    uploadVoiceMessage(req, res, (err) => {
+      if (err) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res
+            .status(413)
+            .json({ message: "Voice message too large. Maximum 10MB." });
+        }
+        return res
+          .status(400)
+          .json({ message: err.message || "Upload failed" });
       }
-      return res.status(400).json({ message: err.message || "Upload failed" });
-    }
-    next();
-  });
-}, async (req, res) => {
-  let tempPath = null;
-  try {
-    const { receiverId, duration } = req.body;
-    const senderId = req.user._id;
-    const receiverIdStr = receiverId ? String(receiverId) : "";
-    const senderIdStr = String(senderId);
-    const file = req.file;
-
-    if (!receiverId) {
-      return res.status(400).json({ message: "receiverId is required" });
-    }
-
-    if (!file) {
-      return res.status(400).json({ message: "Voice file is required" });
-    }
-
-    const receiver = await userModel.findById(receiverId).select("_id blockedUsers");
-    if (!receiver) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Check if receiver has blocked the sender
-    const receiverBlocked = (receiver.blockedUsers || []).some(
-      (id) => String(id) === senderIdStr,
-    );
-    if (receiverBlocked) {
-      return res.status(403).json({ message: "You are blocked from this user. You cannot send messages to this user." });
-    }
-
-    // Check if sender has blocked the receiver
-    const sender = await userModel.findById(senderId).select("blockedUsers");
-    const senderBlocked = (sender.blockedUsers || []).some(
-      (id) => String(id) === receiverIdStr,
-    );
-    if (senderBlocked) {
-      return res.status(403).json({ message: "You have blocked this user" });
-    }
-
-    tempPath = file.path;
-    const uploadOptions = { resource_type: "video" }; // Cloudinary treats audio as video
-    const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
-    const voiceUrl = result.secure_url;
-    const publicId = result.public_id || null;
-    await fs.unlink(tempPath).catch(() => {});
-    tempPath = null;
-
-    const msg = await messageModel.create({
-      sender: senderId,
-      receiver: receiverId,
-      voiceMessage: {
-        url: voiceUrl,
-        duration: duration ? parseInt(duration, 10) : 0,
-        cloudinaryPublicId: publicId,
-      },
+      next();
     });
+  },
+  async (req, res) => {
+    let tempPath = null;
+    try {
+      const { receiverId, duration } = req.body;
+      const senderId = req.user._id;
+      const receiverIdStr = receiverId ? String(receiverId) : "";
+      const senderIdStr = String(senderId);
+      const file = req.file;
 
-    const populated = await messageModel
-      .findById(msg._id)
-      .populate("sender", "username profileImg")
-      .populate("receiver", "username profileImg")
-      .lean();
+      if (!receiverId) {
+        return res.status(400).json({ message: "receiverId is required" });
+      }
 
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`user:${receiverId}`).emit("new_message", populated);
-    }
+      if (!file) {
+        return res.status(400).json({ message: "Voice file is required" });
+      }
 
-    const receiverUser = await userModel.findById(receiverId).select("expoPushToken").lean();
-    if (receiverUser?.expoPushToken) {
-      sendExpoPush(receiverUser.expoPushToken, {
-        title: req.user?.username || "New message",
-        body: "🎤 Voice message",
-        data: { type: "message", senderId: String(senderId), messageId: populated._id },
-      });
-    }
+      const receiver = await userModel
+        .findById(receiverId)
+        .select("_id blockedUsers");
+      if (!receiver) {
+        return res.status(404).json({ message: "User not found" });
+      }
 
-    return res.status(201).json({ message: populated });
-  } catch (err) {
-    if (tempPath) {
+      // Check if receiver has blocked the sender
+      const receiverBlocked = (receiver.blockedUsers || []).some(
+        (id) => String(id) === senderIdStr,
+      );
+      if (receiverBlocked) {
+        return res
+          .status(403)
+          .json({
+            message:
+              "You are blocked from this user. You cannot send messages to this user.",
+          });
+      }
+
+      // Check if sender has blocked the receiver
+      const sender = await userModel.findById(senderId).select("blockedUsers");
+      const senderBlocked = (sender.blockedUsers || []).some(
+        (id) => String(id) === receiverIdStr,
+      );
+      if (senderBlocked) {
+        return res.status(403).json({ message: "You have blocked this user" });
+      }
+
+      tempPath = file.path;
+      const uploadOptions = { resource_type: "video" }; // Cloudinary treats audio as video
+      const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
+      const voiceUrl = result.secure_url;
+      const publicId = result.public_id || null;
       await fs.unlink(tempPath).catch(() => {});
+      tempPath = null;
+
+      const msg = await messageModel.create({
+        sender: senderId,
+        receiver: receiverId,
+        voiceMessage: {
+          url: voiceUrl,
+          duration: duration ? parseInt(duration, 10) : 0,
+          cloudinaryPublicId: publicId,
+        },
+      });
+
+      const populated = await messageModel
+        .findById(msg._id)
+        .populate("sender", "username profileImg")
+        .populate("receiver", "username profileImg")
+        .lean();
+
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${receiverId}`).emit("new_message", populated);
+      }
+
+      const receiverUser = await userModel
+        .findById(receiverId)
+        .select("expoPushToken")
+        .lean();
+      if (receiverUser?.expoPushToken) {
+        sendExpoPush(receiverUser.expoPushToken, {
+          title: req.user?.username || "New message",
+          body: "🎤 Voice message",
+          data: {
+            type: "message",
+            senderId: String(senderId),
+            messageId: populated._id,
+          },
+        });
+      }
+
+      return res.status(201).json({ message: populated });
+    } catch (err) {
+      if (tempPath) {
+        await fs.unlink(tempPath).catch(() => {});
+      }
+      console.error("POST /messages/voice", err);
+      return res.status(500).json({ message: "Failed to send voice message" });
     }
-    console.error("POST /messages/voice", err);
-    return res.status(500).json({ message: "Failed to send voice message" });
-  }
-});
+  },
+);
 
 /** DELETE /messages/:messageId – delete a message */
 router.delete("/:messageId", protectRoutes, async (req, res) => {
@@ -380,9 +462,13 @@ router.delete("/:messageId", protectRoutes, async (req, res) => {
       const receiverId = String(msg.receiver);
       const receiverRoom = `user:${receiverId}`;
       const senderRoom = `user:${userId}`;
-      
-      io.to(receiverRoom).emit("message_deleted", { messageId: String(messageId) });
-      io.to(senderRoom).emit("message_deleted", { messageId: String(messageId) });
+
+      io.to(receiverRoom).emit("message_deleted", {
+        messageId: String(messageId),
+      });
+      io.to(senderRoom).emit("message_deleted", {
+        messageId: String(messageId),
+      });
     }
 
     return res.status(200).json({ message: "Message deleted successfully" });
@@ -423,7 +509,10 @@ router.delete("/conversation/:otherUserId", protectRoutes, async (req, res) => {
           resource_type: "video",
         });
       } catch (err) {
-        console.error("Failed to delete conversation voice files from Cloudinary:", err);
+        console.error(
+          "Failed to delete conversation voice files from Cloudinary:",
+          err,
+        );
       }
     }
 
@@ -440,7 +529,7 @@ router.delete("/conversation/:otherUserId", protectRoutes, async (req, res) => {
     if (io) {
       const receiverRoom = `user:${otherUserId}`;
       const senderRoom = `user:${userId}`;
-      
+
       io.to(receiverRoom).emit("conversation_cleared", { clearedBy: userId });
       io.to(senderRoom).emit("conversation_cleared", { clearedBy: userId });
     }

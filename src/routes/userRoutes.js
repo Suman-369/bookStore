@@ -25,11 +25,15 @@ router.get("/last-seen", protectRoutes, async (req, res) => {
     const ids = req.query.ids;
     const arr = Array.isArray(ids) ? ids : ids ? String(ids).split(",") : [];
     if (!arr.length) return res.json({});
-    
-    const users = await userModel.find({ _id: { $in: arr } }).select("_id lastSeen").lean();
+
+    const users = await userModel
+      .find({ _id: { $in: arr } })
+      .select("_id lastSeen")
+      .lean();
     const lastSeenMap = {};
     users.forEach((user) => {
-      lastSeenMap[String(user._id)] = user.lastSeen || user.createdAt || new Date();
+      lastSeenMap[String(user._id)] =
+        user.lastSeen || user.createdAt || new Date();
     });
     return res.json(lastSeenMap);
   } catch (e) {
@@ -59,7 +63,10 @@ router.get("/:userId/public-key", protectRoutes, async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const user = await userModel.findById(userId).select("publicKey _id").lean();
+    const user = await userModel
+      .findById(userId)
+      .select("publicKey e2eeEnabled _id")
+      .lean();
 
     if (!user) {
       return res.status(404).json({
@@ -67,15 +74,17 @@ router.get("/:userId/public-key", protectRoutes, async (req, res) => {
       });
     }
 
-    if (!user.publicKey) {
+    if (!user.publicKey || !user.e2eeEnabled) {
       return res.status(400).json({
         message: "User has not set up E2EE yet",
+        e2eeEnabled: false,
       });
     }
 
     return res.json({
       userId: user._id,
       publicKey: user.publicKey,
+      e2eeEnabled: true,
     });
   } catch (error) {
     console.error("GET /users/:userId/public-key", error);
@@ -85,7 +94,7 @@ router.get("/:userId/public-key", protectRoutes, async (req, res) => {
   }
 });
 
-/** POST /users/upload-public-key – upload user's public key */
+/** POST /users/upload-public-key – upload user's public key and enable E2EE */
 router.post("/upload-public-key", protectRoutes, async (req, res) => {
   try {
     const { publicKey } = req.body;
@@ -104,13 +113,26 @@ router.post("/upload-public-key", protectRoutes, async (req, res) => {
       });
     }
 
-    // Update user's public key
-    await userModel.findByIdAndUpdate(userId, {
-      $set: { publicKey: publicKey.trim() },
-    });
+    // Update user's public key AND set e2eeEnabled to true
+    const updated = await userModel
+      .findByIdAndUpdate(
+        userId,
+        {
+          $set: {
+            publicKey: publicKey.trim(),
+            e2eeEnabled: true, // CRITICAL: Only enable after key upload
+          },
+        },
+        { new: true },
+      )
+      .select("publicKey e2eeEnabled");
+
+    console.log(`✅ E2EE enabled for user ${userId}`);
 
     return res.json({
-      message: "Public key uploaded successfully",
+      message: "Public key uploaded and E2EE enabled successfully",
+      e2eeEnabled: updated.e2eeEnabled,
+      publicKey: updated.publicKey,
     });
   } catch (error) {
     console.error("POST /users/upload-public-key", error);
@@ -194,7 +216,11 @@ router.post("/block", protectRoutes, async (req, res) => {
     }
 
     // Check if already blocked
-    if ((currentUser.blockedUsers || []).some((id) => String(id) === String(userId))) {
+    if (
+      (currentUser.blockedUsers || []).some(
+        (id) => String(id) === String(userId),
+      )
+    ) {
       return res.status(400).json({ message: "User is already blocked" });
     }
 
@@ -224,7 +250,7 @@ router.post("/unblock", protectRoutes, async (req, res) => {
     }
 
     currentUser.blockedUsers = currentUser.blockedUsers.filter(
-      (id) => id.toString() !== userId
+      (id) => id.toString() !== userId,
     );
     await currentUser.save();
 
