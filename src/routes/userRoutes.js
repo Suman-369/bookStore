@@ -106,4 +106,84 @@ router.get("/:userId/books", protectRoutes, async (req, res) => {
   }
 });
 
+/** POST /users/block – block a user */
+router.post("/block", protectRoutes, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const currentUserId = req.user._id;
+
+    if (!userId || userId === currentUserId.toString()) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const userToBlock = await userModel.findById(userId);
+    if (!userToBlock) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const currentUser = await userModel.findById(currentUserId);
+    if (!currentUser.blockedUsers) {
+      currentUser.blockedUsers = [];
+    }
+
+    // Check if already blocked
+    if (currentUser.blockedUsers.includes(userId)) {
+      return res.status(400).json({ message: "User is already blocked" });
+    }
+
+    currentUser.blockedUsers.push(userId);
+    await currentUser.save();
+
+    return res.json({ message: "User blocked successfully" });
+  } catch (error) {
+    console.error("POST /users/block", error);
+    return res.status(500).json({ message: "Failed to block user" });
+  }
+});
+
+/** POST /users/unblock – unblock a user */
+router.post("/unblock", protectRoutes, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const currentUserId = req.user._id;
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID required" });
+    }
+
+    const currentUser = await userModel.findById(currentUserId);
+    if (!currentUser.blockedUsers) {
+      return res.status(400).json({ message: "User is not blocked" });
+    }
+
+    currentUser.blockedUsers = currentUser.blockedUsers.filter(
+      (id) => id.toString() !== userId
+    );
+    await currentUser.save();
+
+    return res.json({ message: "User unblocked successfully" });
+  } catch (error) {
+    console.error("POST /users/unblock", error);
+    return res.status(500).json({ message: "Failed to unblock user" });
+  }
+});
+
+/** GET /users/blocked – get list of blocked users */
+router.get("/blocked/list", protectRoutes, async (req, res) => {
+  try {
+    const currentUser = await userModel
+      .findById(req.user._id)
+      .populate("blockedUsers", "username profileImg _id")
+      .select("blockedUsers")
+      .lean();
+
+    return res.json({
+      blockedUsers: currentUser?.blockedUsers || [],
+    });
+  } catch (error) {
+    console.error("GET /users/blocked/list", error);
+    return res.status(500).json({ message: "Failed to fetch blocked users" });
+  }
+});
+
 export default router;

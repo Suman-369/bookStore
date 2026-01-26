@@ -65,6 +65,23 @@ export function setupSocket(io) {
       }
 
       try {
+        // Check if receiver has blocked the sender
+        const receiver = await userModel.findById(receiverId).select("blockedUsers").lean();
+        if (!receiver) {
+          const err = { message: "User not found" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+        if (receiver.blockedUsers && receiver.blockedUsers.includes(userId)) {
+          const err = { message: "You cannot send messages to this user" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        // Check if sender has blocked the receiver
+        const sender = await userModel.findById(userId).select("blockedUsers").lean();
+        if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+          const err = { message: "You have blocked this user" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
         const msg = await messageModel.create({
           sender: userId,
           receiver: receiverId,

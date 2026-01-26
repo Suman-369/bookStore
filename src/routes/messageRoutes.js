@@ -170,9 +170,20 @@ router.post("/", protectRoutes, async (req, res) => {
       return res.status(400).json({ message: "Message cannot be empty" });
     }
 
-    const receiver = await userModel.findById(receiverId).select("_id");
+    const receiver = await userModel.findById(receiverId).select("_id blockedUsers");
     if (!receiver) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if receiver has blocked the sender
+    if (receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+      return res.status(403).json({ message: "You cannot send messages to this user" });
+    }
+
+    // Check if sender has blocked the receiver
+    const sender = await userModel.findById(senderId).select("blockedUsers");
+    if (sender.blockedUsers && sender.blockedUsers.includes(receiverId)) {
+      return res.status(403).json({ message: "You have blocked this user" });
     }
 
     const msg = await messageModel.create({
@@ -243,6 +254,44 @@ router.delete("/:messageId", protectRoutes, async (req, res) => {
   } catch (err) {
     console.error("DELETE /messages/:messageId", err);
     return res.status(500).json({ message: "Failed to delete message" });
+  }
+});
+
+/** DELETE /messages/conversation/:otherUserId – clear all messages with a user */
+router.delete("/conversation/:otherUserId", protectRoutes, async (req, res) => {
+  try {
+    const { otherUserId } = req.params;
+    const userId = req.user._id.toString();
+
+    if (!otherUserId || otherUserId === userId) {
+      return res.status(400).json({ message: "Invalid other user ID" });
+    }
+
+    // Delete all messages between current user and other user
+    const result = await messageModel.deleteMany({
+      $or: [
+        { sender: userId, receiver: otherUserId },
+        { sender: otherUserId, receiver: userId },
+      ],
+    });
+
+    // Notify both users via socket
+    const io = req.app.get("io");
+    if (io) {
+      const receiverRoom = `user:${otherUserId}`;
+      const senderRoom = `user:${userId}`;
+      
+      io.to(receiverRoom).emit("conversation_cleared", { clearedBy: userId });
+      io.to(senderRoom).emit("conversation_cleared", { clearedBy: userId });
+    }
+
+    return res.status(200).json({
+      message: "Conversation cleared successfully",
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    console.error("DELETE /messages/conversation/:otherUserId", err);
+    return res.status(500).json({ message: "Failed to clear conversation" });
   }
 });
 

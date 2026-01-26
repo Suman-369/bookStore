@@ -23,6 +23,7 @@ const userSchema = new mongoose.Schema({
     },
     expoPushToken: { type: String, default: "" },
     lastSeen: { type: Date, default: Date.now },
+    blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
 },{timestamps:true})
 
 const userModel = mongoose.model("User",userSchema)
