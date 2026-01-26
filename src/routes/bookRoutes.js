@@ -5,8 +5,10 @@ import bookModel from "../models/bookModel.js";
 import likeModel from "../models/likeModel.js";
 import commentModel from "../models/commentModel.js";
 import userModel from "../models/userModel.js";
+import friendModel from "../models/friendModel.js";
 import { protectRoutes } from "../middleware/auth.middleware.js";
 import { uploadMedia } from "../middleware/upload.middleware.js";
+import { sendExpoPush } from "../lib/pushNotifications.js";
 
 const router = express.Router();
 
@@ -52,6 +54,63 @@ router.post("/create", protectRoutes, (req, res, next) => {
             rating: r,
             user: req.user._id,
         });
+
+        // Send notifications to all friends when a post is created
+        try {
+            const userId = req.user._id;
+            const username = req.user.username || "Someone";
+            
+            // Get all accepted friendships where user is either sender or receiver
+            const friendships = await friendModel.find({
+                $or: [
+                    { sender: userId, status: "accepted" },
+                    { receiver: userId, status: "accepted" },
+                ],
+            }).select("sender receiver").lean();
+            
+            // Extract friend IDs (excluding the current user)
+            const friendIds = friendships
+                .map((friendship) => {
+                    if (String(friendship.sender) === String(userId)) {
+                        return friendship.receiver;
+                    }
+                    return friendship.sender;
+                })
+                .filter(Boolean);
+            
+            // Get all friends with push tokens
+            if (friendIds.length > 0) {
+                const friendsWithTokens = await userModel
+                    .find({
+                        _id: { $in: friendIds },
+                        expoPushToken: { $exists: true, $ne: "" },
+                    })
+                    .select("expoPushToken")
+                    .lean();
+                
+                // Collect all valid push tokens
+                const pushTokens = friendsWithTokens
+                    .map((friend) => friend.expoPushToken)
+                    .filter((token) => token && typeof token === "string");
+                
+                // Send notification to all friends at once (batch send)
+                if (pushTokens.length > 0) {
+                    const postTitle = title.length > 40 ? title.slice(0, 37) + "…" : title;
+                    sendExpoPush(pushTokens, {
+                        title: "New post from " + username,
+                        body: postTitle,
+                        data: {
+                            type: "post",
+                            bookId: String(newBook._id),
+                            userId: String(userId),
+                        },
+                    });
+                }
+            }
+        } catch (e) {
+            // Ignore notification errors - don't fail the post creation
+            console.warn("Error sending post notifications:", e?.message || e);
+        }
 
         res.status(201).json({ message: "Book created successfully", book: newBook });
     } catch (error) {
