@@ -191,7 +191,7 @@ router.post("/", protectRoutes, async (req, res) => {
       (id) => String(id) === senderIdStr,
     );
     if (receiverBlocked) {
-      return res.status(403).json({ message: "You cannot send messages to this user" });
+      return res.status(403).json({ message: "You are blocked from this user. You cannot send messages to this user." });
     }
 
     // Check if sender has blocked the receiver
@@ -284,7 +284,7 @@ router.post("/voice", protectRoutes, (req, res, next) => {
       (id) => String(id) === senderIdStr,
     );
     if (receiverBlocked) {
-      return res.status(403).json({ message: "You cannot send messages to this user" });
+      return res.status(403).json({ message: "You are blocked from this user. You cannot send messages to this user." });
     }
 
     // Check if sender has blocked the receiver

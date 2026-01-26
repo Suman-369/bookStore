@@ -86,7 +86,7 @@ export function setupSocket(io) {
           (id) => String(id) === senderIdStr,
         );
         if (receiverBlocked) {
-          const err = { message: "You cannot send messages to this user" };
+          const err = { message: "You are blocked from this user. You cannot send messages to this user." };
           return typeof cb === "function" ? cb(err) : null;
         }
 
