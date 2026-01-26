@@ -346,6 +346,16 @@ router.delete("/:messageId", protectRoutes, async (req, res) => {
       });
     }
 
+    // If this message has a voice attachment, delete it from Cloudinary
+    const publicId = msg.voiceMessage?.cloudinaryPublicId;
+    if (publicId) {
+      try {
+        await cloudinary.uploader.destroy(publicId, { resource_type: "video" });
+      } catch (err) {
+        console.error("Failed to delete voice file from Cloudinary:", err);
+      }
+    }
+
     await messageModel.findByIdAndDelete(messageId);
 
     // Notify both users via socket
@@ -374,6 +384,31 @@ router.delete("/conversation/:otherUserId", protectRoutes, async (req, res) => {
 
     if (!otherUserId || otherUserId === userId) {
       return res.status(400).json({ message: "Invalid other user ID" });
+    }
+
+    // Find all messages in this conversation to collect any voice attachments
+    const messages = await messageModel
+      .find({
+        $or: [
+          { sender: userId, receiver: otherUserId },
+          { sender: otherUserId, receiver: userId },
+        ],
+      })
+      .select("voiceMessage.cloudinaryPublicId")
+      .lean();
+
+    const publicIds = messages
+      .map((m) => m.voiceMessage?.cloudinaryPublicId)
+      .filter(Boolean);
+
+    if (publicIds.length) {
+      try {
+        await cloudinary.api.delete_resources(publicIds, {
+          resource_type: "video",
+        });
+      } catch (err) {
+        console.error("Failed to delete conversation voice files from Cloudinary:", err);
+      }
     }
 
     // Delete all messages between current user and other user
