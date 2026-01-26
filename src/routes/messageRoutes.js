@@ -121,7 +121,7 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
       .find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate("sender", "username profileImg")
+      .populate("sender", "username profileImg publicKey")
       .populate("receiver", "username profileImg")
       .lean();
 
@@ -224,12 +224,10 @@ router.post("/", protectRoutes, async (req, res) => {
       (id) => String(id) === senderIdStr,
     );
     if (receiverBlocked) {
-      return res
-        .status(403)
-        .json({
-          message:
-            "You are blocked from this user. You cannot send messages to this user.",
-        });
+      return res.status(403).json({
+        message:
+          "You are blocked from this user. You cannot send messages to this user.",
+      });
     }
 
     // Check if sender has blocked the receiver
@@ -265,7 +263,7 @@ router.post("/", protectRoutes, async (req, res) => {
 
     const populated = await messageModel
       .findById(msg._id)
-      .populate("sender", "username profileImg")
+      .populate("sender", "username profileImg publicKey")
       .populate("receiver", "username profileImg")
       .lean();
 
@@ -353,12 +351,10 @@ router.post(
         (id) => String(id) === senderIdStr,
       );
       if (receiverBlocked) {
-        return res
-          .status(403)
-          .json({
-            message:
-              "You are blocked from this user. You cannot send messages to this user.",
-          });
+        return res.status(403).json({
+          message:
+            "You are blocked from this user. You cannot send messages to this user.",
+        });
       }
 
       // Check if sender has blocked the receiver

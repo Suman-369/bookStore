@@ -174,7 +174,7 @@ export function setupSocket(io) {
         const msg = await messageModel.create(msgData);
         const populated = await messageModel
           .findById(msg._id)
-          .populate("sender", "username profileImg")
+          .populate("sender", "username profileImg publicKey")
           .populate("receiver", "username profileImg")
           .lean();
 

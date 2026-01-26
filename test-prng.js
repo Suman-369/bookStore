@@ -1,5 +1,5 @@
 // Test PRNG initialization for TweetNaCl
-const nacl = require("tweetnacl");
+import nacl from "tweetnacl";
 
 console.log("🔍 Testing TweetNaCl PRNG initialization...\n");
 
