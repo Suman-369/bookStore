@@ -65,24 +65,39 @@ router.get("/conversations", protectRoutes, async (req, res) => {
       { $sort: { "lastMessage.createdAt": -1 } },
     ]);
 
-    const conversations = agg.map((c) => ({
-      _id: c._id,
-      username: c.username,
-      profileImg: c.profileImg,
-      email: c.email,
-      lastMessage: c.lastMessage
-        ? {
-            text:
-              c.lastMessage.text ||
-              (c.lastMessage.voiceMessage ? "🎤 Voice message" : ""),
-            voiceMessage: c.lastMessage.voiceMessage || null,
-            createdAt: c.lastMessage.createdAt,
-            sender: c.lastMessage.sender,
-            read: c.lastMessage.read,
-          }
-        : null,
-      unreadCount: c.unreadCount || 0,
-    }));
+    const conversations = agg.map((c) => {
+      let lastMessage = null;
+
+      if (c.lastMessage) {
+        // Prefer a clear label for encrypted / voice messages instead of empty text
+        let text = "";
+        if (c.lastMessage.isEncrypted) {
+          text = "🔒 Encrypted message";
+        } else if (c.lastMessage.voiceMessage) {
+          text = "🎤 Voice message";
+        } else {
+          text = c.lastMessage.text || "";
+        }
+
+        lastMessage = {
+          text,
+          voiceMessage: c.lastMessage.voiceMessage || null,
+          createdAt: c.lastMessage.createdAt,
+          sender: c.lastMessage.sender,
+          read: c.lastMessage.read,
+          isEncrypted: !!c.lastMessage.isEncrypted,
+        };
+      }
+
+      return {
+        _id: c._id,
+        username: c.username,
+        profileImg: c.profileImg,
+        email: c.email,
+        lastMessage,
+        unreadCount: c.unreadCount || 0,
+      };
+    });
 
     return res.json({ conversations });
   } catch (err) {
@@ -125,7 +140,23 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
       .populate("receiver", "username profileImg")
       .lean();
 
+    // Old messages may not have senderPublicKey stored at top-level.
+    // Normalize payload so the client can always decrypt using senderPublicKey
     const reversed = messages.reverse();
+    const normalizedMessages = reversed.map((m) => {
+      if (
+        m.isEncrypted &&
+        !m.senderPublicKey &&
+        m.sender &&
+        m.sender.publicKey
+      ) {
+        return {
+          ...m,
+          senderPublicKey: m.sender.publicKey,
+        };
+      }
+      return m;
+    });
 
     const toMark = await messageModel
       .find({
@@ -150,7 +181,10 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
       }
     }
 
-    return res.json({ messages: reversed, hasMore: messages.length === limit });
+    return res.json({
+      messages: normalizedMessages,
+      hasMore: messages.length === limit,
+    });
   } catch (err) {
     console.error("GET /:otherUserId", err);
     return res.status(500).json({ message: "Failed to fetch messages" });
