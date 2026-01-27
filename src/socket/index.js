@@ -149,11 +149,26 @@ export function setupSocket(io) {
           msgData.nonce = nonce;
           msgData.isEncrypted = true;
 
-          // CRITICAL: persist the sender's public key that was used to encrypt
+          // CRITICAL: Get sender's public key from database if not provided
           // so that future fetches (GET /messages) can decrypt reliably using
           // the original key, even if the user rotates keys later.
-          if (senderPublicKey) {
-            msgData.senderPublicKey = senderPublicKey;
+          let finalSenderPublicKey = senderPublicKey;
+          if (!finalSenderPublicKey) {
+            const senderUser = await userModel
+              .findById(userId)
+              .select("publicKey")
+              .lean();
+            finalSenderPublicKey = senderUser?.publicKey;
+          }
+
+          if (finalSenderPublicKey) {
+            msgData.senderPublicKey = finalSenderPublicKey;
+          } else {
+            const err = { message: "Sender public key not available" };
+            console.error(
+              `❌ Cannot store message without sender public key from ${senderIdStr}`,
+            );
+            return typeof cb === "function" ? cb(err) : null;
           }
 
           console.log(

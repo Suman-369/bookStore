@@ -275,8 +275,28 @@ router.post("/", protectRoutes, async (req, res) => {
     if (isE2EEMessage) {
       msgData.encryptedMessage = cipherText;
       msgData.nonce = nonce;
-      msgData.senderPublicKey = req.body.senderPublicKey; // Store the sender's public key used for encryption
       msgData.isEncrypted = true;
+
+      // CRITICAL: Get sender's public key if not provided
+      // so that future fetches (GET /messages) can decrypt reliably
+      let finalSenderPublicKey = req.body.senderPublicKey;
+      if (!finalSenderPublicKey) {
+        const senderUser = await userModel
+          .findById(senderId)
+          .select("publicKey")
+          .lean();
+        finalSenderPublicKey = senderUser?.publicKey;
+      }
+
+      if (finalSenderPublicKey) {
+        msgData.senderPublicKey = finalSenderPublicKey;
+      } else {
+        return res.status(400).json({
+          message: "Sender public key not available",
+          code: "MISSING_SENDER_KEY",
+        });
+      }
+
       console.log(
         `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
       );
@@ -293,6 +313,11 @@ router.post("/", protectRoutes, async (req, res) => {
       .populate("sender", "username profileImg publicKey")
       .populate("receiver", "username profileImg")
       .lean();
+
+    // CRITICAL: Attach senderPublicKey to the message object for client-side decryption
+    if (populated.sender?.publicKey && isE2EEMessage) {
+      populated.senderPublicKey = populated.sender.publicKey;
+    }
 
     const io = req.app.get("io");
     if (io) {
