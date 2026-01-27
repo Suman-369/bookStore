@@ -53,14 +53,12 @@ export function setupSocket(io) {
     socket.on("send_message", async (payload, cb) => {
       const {
         receiverId,
-        text,
         voiceMessage,
-        // E2EE fields
-        encryptedMessage,
-        encryptedSymmetricKey,
+        // E2EE fields - simple nacl.box (no symmetric key)
+        cipherText,
         nonce,
         isEncrypted,
-        cipherText,
+        senderPublicKey,
       } = payload || {};
 
       if (!receiverId) {
@@ -71,29 +69,18 @@ export function setupSocket(io) {
       const receiverIdStr = String(receiverId);
       const senderIdStr = String(userId);
 
-      // CRITICAL: Check for E2EE encrypted message
-      const isE2EEMessage =
-        (encryptedMessage && encryptedSymmetricKey && nonce) ||
-        (cipherText && nonce);
+      // CRITICAL: Check for E2EE encrypted message (cipherText + nonce only)
+      const isE2EEMessage = cipherText && nonce;
 
-      // BLOCK: Do NOT accept plaintext text messages from regular send
-      // Only accept encrypted messages or voice messages
-      if (!isE2EEMessage && text) {
-        const err = {
-          message:
-            "❌ PLAINTEXT MESSAGES NOT ALLOWED. Encryption is mandatory. Please enable E2EE.",
-        };
-        console.error(
-          `🚫 Blocked plaintext message from ${senderIdStr} to ${receiverIdStr}`,
-        );
-        return typeof cb === "function" ? cb(err) : null;
-      }
-
+      // BLOCK: Do NOT accept plaintext messages
       if (!isE2EEMessage && !voiceMessage) {
         const err = {
           message:
-            "Encrypted message (with encryptedMessage, encryptedSymmetricKey, nonce) is required",
+            "❌ Encrypted message (cipherText + nonce) or voiceMessage is required",
         };
+        console.error(
+          `🚫 Blocked non-encrypted message from ${senderIdStr} to ${receiverIdStr}`,
+        );
         return typeof cb === "function" ? cb(err) : null;
       }
 
@@ -155,27 +142,21 @@ export function setupSocket(io) {
           receiver: receiverId,
         };
 
-        // Handle E2EE encrypted messages ONLY
+        // Handle E2EE encrypted messages (simple nacl.box only)
         if (isE2EEMessage) {
-          if (encryptedMessage && encryptedSymmetricKey) {
-            // Hybrid E2EE for DB storage
-            msgData.encryptedMessage = encryptedMessage;
-            msgData.encryptedSymmetricKey = encryptedSymmetricKey;
-          } else if (cipherText) {
-            // Asymmetric for socket, store as encryptedMessage for DB
-            msgData.encryptedMessage = cipherText;
-          }
+          // Store cipherText and nonce only
+          msgData.encryptedMessage = cipherText;
           msgData.nonce = nonce;
           msgData.isEncrypted = true;
           console.log(
             `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
           );
         } else if (voiceMessage) {
-          // Voice messages are still allowed unencrypted (they're already binary)
+          // Voice messages are stored as-is
           msgData.voiceMessage = voiceMessage;
           msgData.isEncrypted = false;
         } else {
-          // Should never reach here due to validation above, but belt-and-suspenders
+          // Should never reach here due to validation above
           const err = { message: "Invalid message format" };
           return typeof cb === "function" ? cb(err) : null;
         }

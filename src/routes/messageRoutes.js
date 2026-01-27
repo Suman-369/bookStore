@@ -160,15 +160,8 @@ router.get("/:otherUserId", protectRoutes, async (req, res) => {
 /** POST /messages – send message (persist). Used when socket unavailable or fallback. */
 router.post("/", protectRoutes, async (req, res) => {
   try {
-    const {
-      receiverId,
-      text,
-      voiceMessage,
-      encryptedMessage,
-      encryptedSymmetricKey,
-      nonce,
-      isEncrypted,
-    } = req.body;
+    const { receiverId, voiceMessage, cipherText, nonce, isEncrypted } =
+      req.body;
     const senderId = req.user._id;
     const receiverIdStr = receiverId ? String(receiverId) : "";
     const senderIdStr = String(senderId);
@@ -177,17 +170,17 @@ router.post("/", protectRoutes, async (req, res) => {
       return res.status(400).json({ message: "receiverId is required" });
     }
 
-    // CRITICAL: Check for encrypted message
-    const isE2EEMessage = encryptedMessage && encryptedSymmetricKey && nonce;
+    // CRITICAL: Check for encrypted message (simple nacl.box only)
+    const isE2EEMessage = cipherText && nonce;
 
-    // BLOCK: Do NOT accept plaintext text messages
-    if (!isE2EEMessage && text) {
+    // BLOCK: Do NOT accept non-encrypted messages
+    if (!isE2EEMessage && !voiceMessage) {
       console.error(
-        `🚫 Blocked plaintext message from ${senderIdStr} to ${receiverIdStr}`,
+        `🚫 Blocked non-encrypted message from ${senderIdStr} to ${receiverIdStr}`,
       );
       return res.status(403).json({
         message:
-          "❌ PLAINTEXT MESSAGES NOT ALLOWED. Encryption is mandatory. Please enable E2EE.",
+          "❌ Encrypted message (cipherText + nonce) or voiceMessage is required",
         code: "E2EE_REQUIRED",
       });
     }
@@ -196,7 +189,7 @@ router.post("/", protectRoutes, async (req, res) => {
     if (!isE2EEMessage && !voiceMessage) {
       return res.status(400).json({
         message:
-          "Encrypted message (with encryptedMessage, encryptedSymmetricKey, nonce) or voiceMessage is required",
+          "Encrypted message (cipherText + nonce) or voiceMessage is required",
         code: "INVALID_MESSAGE_FORMAT",
       });
     }
@@ -244,17 +237,16 @@ router.post("/", protectRoutes, async (req, res) => {
       receiver: receiverId,
     };
 
-    // Handle E2EE encrypted messages
+    // Handle E2EE encrypted messages (simple nacl.box only)
     if (isE2EEMessage) {
-      msgData.encryptedMessage = encryptedMessage;
-      msgData.encryptedSymmetricKey = encryptedSymmetricKey;
+      msgData.encryptedMessage = cipherText;
       msgData.nonce = nonce;
       msgData.isEncrypted = true;
       console.log(
         `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
       );
     } else if (voiceMessage) {
-      // Voice messages are still allowed unencrypted
+      // Voice messages are stored as-is
       msgData.voiceMessage = voiceMessage;
       msgData.isEncrypted = false;
     }
