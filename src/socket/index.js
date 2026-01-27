@@ -148,6 +148,14 @@ export function setupSocket(io) {
           msgData.encryptedMessage = cipherText;
           msgData.nonce = nonce;
           msgData.isEncrypted = true;
+
+          // CRITICAL: persist the sender's public key that was used to encrypt
+          // so that future fetches (GET /messages) can decrypt reliably using
+          // the original key, even if the user rotates keys later.
+          if (senderPublicKey) {
+            msgData.senderPublicKey = senderPublicKey;
+          }
+
           console.log(
             `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,
           );
