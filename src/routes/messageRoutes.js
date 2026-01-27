@@ -241,6 +241,7 @@ router.post("/", protectRoutes, async (req, res) => {
     if (isE2EEMessage) {
       msgData.encryptedMessage = cipherText;
       msgData.nonce = nonce;
+      msgData.senderPublicKey = req.body.senderPublicKey; // Store the sender's public key used for encryption
       msgData.isEncrypted = true;
       console.log(
         `✅ Encrypted message from ${senderIdStr} to ${receiverIdStr}`,

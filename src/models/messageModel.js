@@ -2,9 +2,23 @@ import mongoose from "mongoose";
 
 const messageSchema = new mongoose.Schema(
   {
-    sender: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    receiver: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    text: { type: String, required: function() { return !this.voiceMessage && !this.encryptedMessage; }, trim: true },
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    receiver: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    text: {
+      type: String,
+      required: function () {
+        return !this.voiceMessage && !this.encryptedMessage;
+      },
+      trim: true,
+    },
     voiceMessage: {
       url: { type: String },
       duration: { type: Number }, // Duration in seconds
@@ -23,10 +37,14 @@ const messageSchema = new mongoose.Schema(
       type: String, // Base64 encoded nonce
       default: "",
     },
+    senderPublicKey: {
+      type: String, // Base64 encoded sender's public key used for encryption
+      default: "",
+    },
     isEncrypted: { type: Boolean, default: false },
     read: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 messageSchema.index({ sender: 1, receiver: 1, createdAt: -1 });
