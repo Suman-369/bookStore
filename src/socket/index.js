@@ -60,6 +60,7 @@ export function setupSocket(io) {
         encryptedSymmetricKey,
         nonce,
         isEncrypted,
+        cipherText,
       } = payload || {};
 
       if (!receiverId) {
@@ -71,7 +72,9 @@ export function setupSocket(io) {
       const senderIdStr = String(userId);
 
       // CRITICAL: Check for E2EE encrypted message
-      const isE2EEMessage = encryptedMessage && encryptedSymmetricKey && nonce;
+      const isE2EEMessage =
+        (encryptedMessage && encryptedSymmetricKey && nonce) ||
+        (cipherText && nonce);
 
       // BLOCK: Do NOT accept plaintext text messages from regular send
       // Only accept encrypted messages or voice messages
@@ -154,8 +157,14 @@ export function setupSocket(io) {
 
         // Handle E2EE encrypted messages ONLY
         if (isE2EEMessage) {
-          msgData.encryptedMessage = encryptedMessage;
-          msgData.encryptedSymmetricKey = encryptedSymmetricKey;
+          if (encryptedMessage && encryptedSymmetricKey) {
+            // Hybrid E2EE for DB storage
+            msgData.encryptedMessage = encryptedMessage;
+            msgData.encryptedSymmetricKey = encryptedSymmetricKey;
+          } else if (cipherText) {
+            // Asymmetric for socket, store as encryptedMessage for DB
+            msgData.encryptedMessage = cipherText;
+          }
           msgData.nonce = nonce;
           msgData.isEncrypted = true;
           console.log(
