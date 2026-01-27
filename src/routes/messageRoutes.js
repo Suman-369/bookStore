@@ -86,6 +86,10 @@ router.get("/conversations", protectRoutes, async (req, res) => {
           sender: c.lastMessage.sender,
           read: c.lastMessage.read,
           isEncrypted: !!c.lastMessage.isEncrypted,
+          // CRITICAL: Pass through encryption fields so client can decrypt preview
+          encryptedMessage: c.lastMessage.encryptedMessage,
+          nonce: c.lastMessage.nonce,
+          senderPublicKey: c.lastMessage.senderPublicKey,
         };
       }
 
@@ -423,7 +427,7 @@ router.post(
       const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
       const voiceUrl = result.secure_url;
       const publicId = result.public_id || null;
-      await fs.unlink(tempPath).catch(() => {});
+      await fs.unlink(tempPath).catch(() => { });
       tempPath = null;
 
       const msg = await messageModel.create({
@@ -466,7 +470,7 @@ router.post(
       return res.status(201).json({ message: populated });
     } catch (err) {
       if (tempPath) {
-        await fs.unlink(tempPath).catch(() => {});
+        await fs.unlink(tempPath).catch(() => { });
       }
       console.error("POST /messages/voice", err);
       return res.status(500).json({ message: "Failed to send voice message" });
