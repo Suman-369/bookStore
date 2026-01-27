@@ -168,6 +168,11 @@ export function setupSocket(io) {
           .populate("receiver", "username profileImg")
           .lean();
 
+        // CRITICAL: Attach senderPublicKey to the message object for client-side decryption
+        if (populated.sender?.publicKey && isE2EEMessage) {
+          populated.senderPublicKey = populated.sender.publicKey;
+        }
+
         const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
         const senderRoom = `${USER_ROOM_PREFIX}${userId}`;
         // Emit to both receiver and sender so both can see the message
