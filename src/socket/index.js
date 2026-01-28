@@ -234,6 +234,130 @@ export function setupSocket(io) {
       }
     });
 
+    // Handle encrypted voice messages
+    socket.on("send_encrypted_voice_message", async (payload, cb) => {
+      const { receiverId, encryptedVoiceMessage, isEncrypted } = payload || {};
+
+      if (!receiverId) {
+        const err = { message: "receiverId is required" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      if (!encryptedVoiceMessage || !isEncrypted) {
+        const err = { message: "Encrypted voice message data is required" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      const { cipherText, nonce, senderPublicKey, duration } = encryptedVoiceMessage;
+      if (!cipherText || !nonce || !senderPublicKey) {
+        const err = { message: "Missing encryption data (cipherText, nonce, senderPublicKey)" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      const receiverIdStr = String(receiverId);
+      const senderIdStr = String(userId);
+
+      if (receiverId === userId) {
+        const err = { message: "Cannot message yourself" };
+        return typeof cb === "function" ? cb(err) : null;
+      }
+
+      try {
+        // Check if receiver has blocked the sender
+        const receiver = await userModel
+          .findById(receiverId)
+          .select("blockedUsers e2eeEnabled")
+          .lean();
+        if (!receiver) {
+          const err = { message: "User not found" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        // Verify recipient has E2EE enabled
+        if (!receiver.e2eeEnabled) {
+          const err = {
+            message: "Recipient has not enabled E2EE yet. Cannot send encrypted voice message.",
+            e2eeEnabled: false,
+          };
+          console.warn(`⚠️  Recipient ${receiverIdStr} doesn't have E2EE enabled`);
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        const receiverBlocked = (receiver.blockedUsers || []).some(
+          (id) => String(id) === senderIdStr,
+        );
+        if (receiverBlocked) {
+          const err = {
+            message: "You are blocked from this user. You cannot send messages to this user.",
+          };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        // Check if sender has blocked the receiver
+        const sender = await userModel
+          .findById(userId)
+          .select("blockedUsers")
+          .lean();
+        const senderBlocked = (sender.blockedUsers || []).some(
+          (id) => String(id) === receiverIdStr,
+        );
+        if (senderBlocked) {
+          const err = { message: "You have blocked this user" };
+          return typeof cb === "function" ? cb(err) : null;
+        }
+
+        // Create encrypted voice message
+        const msgData = {
+          sender: userId,
+          receiver: receiverId,
+          isEncrypted: true,
+          encryptedVoiceMessage: {
+            cipherText,
+            nonce,
+            senderPublicKey,
+            duration: duration ? parseInt(duration, 10) : 0,
+          },
+        };
+
+        const msg = await messageModel.create(msgData);
+        const populated = await messageModel
+          .findById(msg._id)
+          .populate("sender", "username profileImg publicKey")
+          .populate("receiver", "username profileImg")
+          .lean();
+
+        const receiverRoom = `${USER_ROOM_PREFIX}${receiverId}`;
+        const senderRoom = `${USER_ROOM_PREFIX}${userId}`;
+        // Emit to both receiver and sender so both can see the message
+        io.to(receiverRoom).emit("new_message", populated);
+        io.to(senderRoom).emit("new_message", populated);
+
+        const receiverUser = await userModel
+          .findById(receiverId)
+          .select("expoPushToken")
+          .lean();
+        if (receiverUser?.expoPushToken) {
+          const senderName = populated.sender?.username || "Someone";
+          sendExpoPush(receiverUser.expoPushToken, {
+            title: senderName,
+            body: "🔒🎤 Encrypted voice message",
+            data: {
+              type: "message",
+              senderId: String(userId),
+              messageId: String(msg._id),
+            },
+          });
+        }
+
+        console.log(`✅ Encrypted voice message from ${senderIdStr} to ${receiverIdStr}`);
+
+        if (typeof cb === "function") cb(null, populated);
+      } catch (e) {
+        console.error("send_encrypted_voice_message error:", e);
+        if (typeof cb === "function") cb({ message: "Failed to send encrypted voice message" });
+      }
+    });
+
     // Typing indicators
     socket.on("typing_start", (payload) => {
       const { receiverId } = payload || {};

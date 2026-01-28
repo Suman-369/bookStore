@@ -71,7 +71,9 @@ router.get("/conversations", protectRoutes, async (req, res) => {
       if (c.lastMessage) {
         // Prefer a clear label for encrypted / voice messages instead of empty text
         let text = "";
-        if (c.lastMessage.isEncrypted) {
+        if (c.lastMessage.isEncrypted && c.lastMessage.encryptedVoiceMessage) {
+          text = "🔒🎤 Encrypted voice message";
+        } else if (c.lastMessage.isEncrypted) {
           text = "🔒 Encrypted message";
         } else if (c.lastMessage.voiceMessage) {
           text = "🎤 Voice message";
@@ -82,6 +84,7 @@ router.get("/conversations", protectRoutes, async (req, res) => {
         lastMessage = {
           text,
           voiceMessage: c.lastMessage.voiceMessage || null,
+          encryptedVoiceMessage: c.lastMessage.encryptedVoiceMessage || null,
           createdAt: c.lastMessage.createdAt,
           sender: c.lastMessage.sender,
           read: c.lastMessage.read,
@@ -477,6 +480,110 @@ router.post(
     }
   },
 );
+
+/** POST /messages/encrypted-voice – send encrypted voice message */
+router.post("/encrypted-voice", protectRoutes, async (req, res) => {
+  try {
+    const { receiverId, encryptedVoiceMessage, isEncrypted } = req.body;
+    const senderId = req.user._id;
+    const receiverIdStr = receiverId ? String(receiverId) : "";
+    const senderIdStr = String(senderId);
+
+    if (!receiverId) {
+      return res.status(400).json({ message: "receiverId is required" });
+    }
+
+    if (!encryptedVoiceMessage || !isEncrypted) {
+      return res.status(400).json({ 
+        message: "Encrypted voice message data is required" 
+      });
+    }
+
+    const { cipherText, nonce, senderPublicKey, duration } = encryptedVoiceMessage;
+    if (!cipherText || !nonce || !senderPublicKey) {
+      return res.status(400).json({ 
+        message: "Missing encryption data (cipherText, nonce, senderPublicKey)" 
+      });
+    }
+
+    const receiver = await userModel
+      .findById(receiverId)
+      .select("_id blockedUsers");
+    if (!receiver) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if receiver has blocked the sender
+    const receiverBlocked = (receiver.blockedUsers || []).some(
+      (id) => String(id) === senderIdStr,
+    );
+    if (receiverBlocked) {
+      return res.status(403).json({
+        message:
+          "You are blocked from this user. You cannot send messages to this user.",
+      });
+    }
+
+    // Check if sender has blocked the receiver
+    const sender = await userModel.findById(senderId).select("blockedUsers");
+    const senderBlocked = (sender.blockedUsers || []).some(
+      (id) => String(id) === receiverIdStr,
+    );
+    if (senderBlocked) {
+      return res.status(403).json({ message: "You have blocked this user" });
+    }
+
+    // Create encrypted voice message
+    const msg = await messageModel.create({
+      sender: senderId,
+      receiver: receiverId,
+      isEncrypted: true,
+      encryptedVoiceMessage: {
+        cipherText,
+        nonce,
+        senderPublicKey,
+        duration: duration ? parseInt(duration, 10) : 0,
+      },
+    });
+
+    const populated = await messageModel
+      .findById(msg._id)
+      .populate("sender", "username profileImg")
+      .populate("receiver", "username profileImg")
+      .lean();
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${receiverId}`).emit("new_message", populated);
+    }
+
+    const receiverUser = await userModel
+      .findById(receiverId)
+      .select("expoPushToken")
+      .lean();
+    if (receiverUser?.expoPushToken) {
+      sendExpoPush(receiverUser.expoPushToken, {
+        title: req.user?.username || "New message",
+        body: "🔒🎤 Encrypted voice message",
+        data: {
+          type: "message",
+          senderId: String(senderId),
+          messageId: populated._id,
+        },
+      });
+    }
+
+    console.log(
+      `✅ Encrypted voice message from ${senderIdStr} to ${receiverIdStr}`,
+    );
+
+    return res.status(201).json({ message: populated });
+  } catch (err) {
+    console.error("POST /messages/encrypted-voice", err);
+    return res.status(500).json({ message: "Failed to send encrypted voice message" });
+  }
+});
+
 
 /** DELETE /messages/:messageId – delete a message */
 router.delete("/:messageId", protectRoutes, async (req, res) => {

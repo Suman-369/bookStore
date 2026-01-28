@@ -15,7 +15,7 @@ const messageSchema = new mongoose.Schema(
     text: {
       type: String,
       required: function () {
-        return !this.voiceMessage && !this.encryptedMessage;
+        return !this.voiceMessage && !this.encryptedMessage && !this.encryptedVoiceMessage;
       },
       trim: true,
     },
@@ -23,6 +23,13 @@ const messageSchema = new mongoose.Schema(
       url: { type: String },
       duration: { type: Number }, // Duration in seconds
       cloudinaryPublicId: { type: String },
+    },
+    // Encrypted voice message fields
+    encryptedVoiceMessage: {
+      cipherText: { type: String }, // Base64 encoded encrypted voice data
+      nonce: { type: String }, // Base64 encoded nonce
+      senderPublicKey: { type: String }, // Base64 encoded sender's public key
+      duration: { type: Number }, // Duration in seconds
     },
     // End-to-End Encryption fields
     encryptedMessage: {
