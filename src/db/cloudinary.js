@@ -21,6 +21,7 @@ async function upload(filePath, options = {}) {
 
   // Add resource type if specified (for videos)
   if (options.resource_type === "video") {
+    uploadOptions.resourceType = "video";
     uploadOptions.tags = ["video"];
   }
 
@@ -82,6 +83,7 @@ export default {
 
       // Add resource type if specified (for videos)
       if (options.resource_type === "video") {
+        uploadOptions.resourceType = "video";
         uploadOptions.tags = ["video"];
       }
 
