@@ -430,7 +430,7 @@ router.post(
       const result = await cloudinary.uploader.upload(tempPath, uploadOptions);
       const voiceUrl = result.secure_url;
       const publicId = result.public_id || null;
-      await fs.unlink(tempPath).catch(() => { });
+      await fs.unlink(tempPath).catch(() => {});
       tempPath = null;
 
       const msg = await messageModel.create({
@@ -473,7 +473,7 @@ router.post(
       return res.status(201).json({ message: populated });
     } catch (err) {
       if (tempPath) {
-        await fs.unlink(tempPath).catch(() => { });
+        await fs.unlink(tempPath).catch(() => {});
       }
       console.error("POST /messages/voice", err);
       return res.status(500).json({ message: "Failed to send voice message" });
@@ -494,15 +494,16 @@ router.post("/encrypted-voice", protectRoutes, async (req, res) => {
     }
 
     if (!encryptedVoiceMessage || !isEncrypted) {
-      return res.status(400).json({ 
-        message: "Encrypted voice message data is required" 
+      return res.status(400).json({
+        message: "Encrypted voice message data is required",
       });
     }
 
-    const { cipherText, nonce, senderPublicKey, duration } = encryptedVoiceMessage;
+    const { cipherText, nonce, senderPublicKey, duration } =
+      encryptedVoiceMessage;
     if (!cipherText || !nonce || !senderPublicKey) {
-      return res.status(400).json({ 
-        message: "Missing encryption data (cipherText, nonce, senderPublicKey)" 
+      return res.status(400).json({
+        message: "Missing encryption data (cipherText, nonce, senderPublicKey)",
       });
     }
 
@@ -580,10 +581,11 @@ router.post("/encrypted-voice", protectRoutes, async (req, res) => {
     return res.status(201).json({ message: populated });
   } catch (err) {
     console.error("POST /messages/encrypted-voice", err);
-    return res.status(500).json({ message: "Failed to send encrypted voice message" });
+    return res
+      .status(500)
+      .json({ message: "Failed to send encrypted voice message" });
   }
 });
-
 
 /** DELETE /messages/:messageId – delete a message */
 router.delete("/:messageId", protectRoutes, async (req, res) => {
@@ -603,13 +605,13 @@ router.delete("/:messageId", protectRoutes, async (req, res) => {
       });
     }
 
-    // If this message has a voice attachment, delete it from Cloudinary
+    // If this message has a voice attachment, delete it from ImageKit
     const publicId = msg.voiceMessage?.cloudinaryPublicId;
     if (publicId) {
       try {
-        await cloudinary.uploader.destroy(publicId, { resource_type: "video" });
+        await cloudinary.uploader.destroy(publicId);
       } catch (err) {
-        console.error("Failed to delete voice file from Cloudinary:", err);
+        console.error("Failed to delete voice file from ImageKit:", err);
       }
     }
 
@@ -664,12 +666,10 @@ router.delete("/conversation/:otherUserId", protectRoutes, async (req, res) => {
 
     if (publicIds.length) {
       try {
-        await cloudinary.api.delete_resources(publicIds, {
-          resource_type: "video",
-        });
+        await cloudinary.api.delete_resources(publicIds);
       } catch (err) {
         console.error(
-          "Failed to delete conversation voice files from Cloudinary:",
+          "Failed to delete conversation voice files from ImageKit:",
           err,
         );
       }
