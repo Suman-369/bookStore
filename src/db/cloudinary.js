@@ -20,17 +20,40 @@ async function upload(filePath, options = {}) {
   };
 
   // Add resource type if specified (for videos)
+  // ImageKit uses "video" resource type for video files
   if (options.resource_type === "video") {
     uploadOptions.resourceType = "video";
     uploadOptions.tags = ["video"];
+    // Use custom metadata for better video handling
+    uploadOptions.customMetadata = {
+      mediaType: "video",
+    };
   }
 
   const result = await imagekit.upload(uploadOptions);
 
+  // Generate proper URL for video streaming
+  // For videos, we need to ensure the URL is in the correct format
+  let videoUrl = result.url;
+
+  // If this is a video, use ImageKit's URL generation to get a proper streaming URL
+  if (options.resource_type === "video" || result.fileType === "video") {
+    // Use ImageKit's URL method to generate a proper video URL
+    // This ensures the URL is formatted correctly for video playback
+    videoUrl = imagekit.url({
+      path: result.filePath,
+      urlEndpoint: process.env.IMAGEKIT_URL,
+      transformation: [
+        // Remove any transformations that might break video playback
+        // Videos should be served as-is for best compatibility
+      ],
+    });
+  }
+
   return {
-    secure_url: result.url,
+    secure_url: videoUrl || result.url,
     public_id: result.fileId,
-    url: result.url,
+    url: videoUrl || result.url,
   };
 }
 
@@ -82,17 +105,40 @@ export default {
       };
 
       // Add resource type if specified (for videos)
+      // ImageKit uses "video" resource type for video files
       if (options.resource_type === "video") {
         uploadOptions.resourceType = "video";
         uploadOptions.tags = ["video"];
+        // Use custom metadata for better video handling
+        uploadOptions.customMetadata = {
+          mediaType: "video",
+        };
       }
 
       const result = await imagekit.upload(uploadOptions);
 
+      // Generate proper URL for video streaming
+      // For videos, we need to ensure the URL is in the correct format
+      let mediaUrl = result.url;
+
+      // If this is a video, use ImageKit's URL generation to get a proper streaming URL
+      if (options.resource_type === "video" || result.fileType === "video") {
+        // Use ImageKit's URL method to generate a proper video URL
+        // This ensures the URL is formatted correctly for video playback
+        mediaUrl = imagekit.url({
+          path: result.filePath,
+          urlEndpoint: process.env.IMAGEKIT_URL,
+          transformation: [
+            // Remove any transformations that might break video playback
+            // Videos should be served as-is for best compatibility
+          ],
+        });
+      }
+
       return {
-        secure_url: result.url,
+        secure_url: mediaUrl || result.url,
         public_id: result.fileId,
-        url: result.url,
+        url: mediaUrl || result.url,
       };
     },
     destroy: async (publicId, options = {}) => {
