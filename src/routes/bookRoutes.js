@@ -20,12 +20,10 @@ router.post(
     uploadMedia(req, res, (err) => {
       if (err) {
         if (err.code === "LIMIT_FILE_SIZE")
-          return res
-            .status(413)
-            .json({
-              message:
-                "File too large. Maximum 100MB for video (with audio) or image.",
-            });
+          return res.status(413).json({
+            message:
+              "File too large. Maximum 100MB for video (with audio) or image.",
+          });
         return res
           .status(400)
           .json({ message: err.message || "Upload failed" });
@@ -65,7 +63,7 @@ router.post(
         title,
         caption,
         image: mediaUrl,
-        cloudinaryPublicId: publicId,
+        imagekitPublicId: publicId,
         mediaType: type,
         rating: r,
         user: req.user._id,
@@ -299,9 +297,9 @@ router.delete("/delete/:id", protectRoutes, async (req, res) => {
       });
     }
 
-    if (book.cloudinaryPublicId) {
+    if (book.imagekitPublicId) {
       try {
-        const publicId = book.cloudinaryPublicId;
+        const publicId = book.imagekitPublicId;
         await cloudinary.uploader.destroy(publicId);
       } catch (error) {
         console.error("Error deleting media from ImageKit:", error.message);
